@@ -1,0 +1,11 @@
+CREATE INDEX idx_images_batch_id        ON images(batch_id);
+CREATE INDEX idx_images_status           ON images(status);
+CREATE INDEX idx_images_user_id          ON images(user_id);
+CREATE INDEX idx_ocr_results_image_id   ON ocr_results(image_id);
+CREATE INDEX idx_product_searches_ocr   ON product_searches(ocr_result_id);
+CREATE INDEX idx_product_searches_status ON product_searches(status);
+CREATE INDEX idx_listings_user_id        ON listings(user_id);
+CREATE INDEX idx_listings_status         ON listings(status);
+CREATE INDEX idx_retry_queue_next_retry  ON retry_queue(next_retry_at) WHERE status = 'pending';
+CREATE INDEX idx_audit_logs_entity       ON audit_logs(entity_type, entity_id);
+CREATE INDEX idx_audit_logs_user_id      ON audit_logs(user_id);
