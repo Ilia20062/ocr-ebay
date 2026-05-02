@@ -32,20 +32,27 @@ export async function runTesseractOcr(base64Content: string, mimeType = 'image/j
     )
     const fullText = data.text ?? ''
 
+    // Page.words doesn't exist in v7 — traverse blocks > paragraphs > lines > words
     const wordConfidences = new Map<string, number>()
-    for (const word of data.words ?? []) {
-      const w = word.text.toUpperCase().trim()
-      if (!w) continue
-      const conf = (word.confidence ?? 0) / 100
-      const existing = wordConfidences.get(w)
-      if (!existing || conf > existing) wordConfidences.set(w, conf)
+    for (const block of data.blocks ?? []) {
+      for (const para of block.paragraphs) {
+        for (const line of para.lines) {
+          for (const word of line.words) {
+            const w = word.text.toUpperCase().trim()
+            if (!w) continue
+            const conf = word.confidence / 100
+            const existing = wordConfidences.get(w)
+            if (!existing || conf > existing) wordConfidences.set(w, conf)
+          }
+        }
+      }
     }
 
     const candidates = extractCandidates(fullText)
     const topCandidate = selectTopCandidate(candidates, wordConfidences)
 
     return {
-      rawResponse: { text: fullText, words: data.words },
+      rawResponse: { text: fullText },
       extractedText: fullText,
       candidates,
       topCandidate,

@@ -36,16 +36,28 @@ export default async function BatchesPage() {
 
   const batchIds = (batches ?? []).map((b) => b.id)
 
-  const { data: images } = batchIds.length > 0
-    ? await db
-        .from('images')
-        .select('id, batch_id, original_filename, status, error_message, created_at, ocr_results(extracted_code, confidence, auto_approved)')
-        .in('batch_id', batchIds)
-        .order('created_at', { ascending: true })
-    : { data: [] }
+  type ImageRow = {
+    id: string
+    batch_id: string
+    original_filename: string | null
+    status: string
+    error_message: string | null
+    created_at: string
+    ocr_results: { extracted_code: string | null; confidence: number | null; auto_approved: boolean }[] | null
+  }
 
-  const imagesByBatch = new Map<string, typeof images>()
-  for (const img of images ?? []) {
+  let images: ImageRow[] = []
+  if (batchIds.length > 0) {
+    const { data } = await db
+      .from('images')
+      .select('id, batch_id, original_filename, status, error_message, created_at, ocr_results(extracted_code, confidence, auto_approved)')
+      .in('batch_id', batchIds)
+      .order('created_at', { ascending: true })
+    images = (data ?? []) as unknown as ImageRow[]
+  }
+
+  const imagesByBatch = new Map<string, ImageRow[]>()
+  for (const img of images) {
     const list = imagesByBatch.get(img.batch_id) ?? []
     list.push(img)
     imagesByBatch.set(img.batch_id, list)
@@ -113,7 +125,7 @@ export default async function BatchesPage() {
                             <td className="px-5 py-3 text-xs">
                               {ocr == null ? '—' : ocr.auto_approved ? '✓' : '✗'}
                             </td>
-                            <td className="px-5 py-3 text-xs text-red-600 max-w-xs truncate" title={errorMsg}>
+                            <td className="px-5 py-3 text-xs text-red-600 max-w-xs truncate" title={errorMsg ?? undefined}>
                               {errorMsg ?? '—'}
                             </td>
                           </tr>

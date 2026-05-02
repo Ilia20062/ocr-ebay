@@ -22,9 +22,9 @@ export interface Database {
         Relationships: []
       }
       images: {
-        Row: { id: string; batch_id: string; user_id: string; storage_path: string; original_filename: string | null; file_size_bytes: number | null; mime_type: string | null; status: string; created_at: string; updated_at: string }
-        Insert: { id?: string; batch_id: string; user_id: string; storage_path: string; original_filename?: string | null; file_size_bytes?: number | null; mime_type?: string | null; status?: string; created_at?: string; updated_at?: string }
-        Update: { status?: string; updated_at?: string }
+        Row: { id: string; batch_id: string; user_id: string; storage_path: string; original_filename: string | null; file_size_bytes: number | null; mime_type: string | null; status: string; error_message: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; batch_id: string; user_id: string; storage_path: string; original_filename?: string | null; file_size_bytes?: number | null; mime_type?: string | null; status?: string; error_message?: string | null; created_at?: string; updated_at?: string }
+        Update: { status?: string; error_message?: string | null; updated_at?: string }
         Relationships: []
       }
       ocr_results: {
