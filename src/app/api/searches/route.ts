@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { withAuth, apiError } from '@/lib/middleware'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { searchEbayProducts, selectBestMatch } from '@/lib/ebay/search'

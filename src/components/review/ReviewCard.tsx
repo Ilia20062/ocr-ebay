@@ -1,11 +1,12 @@
 'use client'
 
 import { useState } from 'react'
+import Image from 'next/image'
 import type { OcrResult } from '@/types/database'
 
 interface Props {
   result: OcrResult & { signed_url?: string; final_code?: string | null }
-  onSubmit: (id: string, action: 'approve' | 'override' | 'discard', override?: string) => Promise<any>
+  onSubmit: (id: string, action: 'approve' | 'override' | 'discard', override?: string) => Promise<{ success: boolean; searchResult?: string; listingResult?: { success: boolean; listingUrl?: string; error?: string } }>
 }
 
 export default function ReviewCard({ result, onSubmit }: Props) {
@@ -39,7 +40,7 @@ export default function ReviewCard({ result, onSubmit }: Props) {
           setDoneState({ status: 'success', message: 'Reviewed successfully.' })
         }
       }
-    } catch (err) {
+    } catch {
       setDoneState({ status: 'error', message: 'An error occurred during submission.' })
     }
     setLoading(false)
@@ -48,7 +49,6 @@ export default function ReviewCard({ result, onSubmit }: Props) {
   if (doneState) {
     const isSuccess = doneState.status === 'success'
     const isError = doneState.status === 'error'
-    const isWarning = doneState.status === 'warning'
     
     return (
       <div className={`rounded-xl border p-5 ${isSuccess ? 'bg-green-50 border-green-200' : isError ? 'bg-red-50 border-red-200' : 'bg-yellow-50 border-yellow-200'}`}>
@@ -70,7 +70,7 @@ export default function ReviewCard({ result, onSubmit }: Props) {
         {/* Image */}
         <div className="bg-gray-50 border-r border-gray-200 flex items-center justify-center p-4 min-h-48">
           {result.signed_url ? (
-            <img src={result.signed_url} alt="Upload" className="max-h-48 object-contain rounded" />
+            <Image src={result.signed_url} alt="Upload" width={200} height={192} className="max-h-48 object-contain rounded" unoptimized />
           ) : (
             <span className="text-gray-400 text-sm">No preview</span>
           )}

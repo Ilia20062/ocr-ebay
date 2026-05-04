@@ -9,7 +9,7 @@ interface Props {
 }
 
 export default function ReviewQueue({ initialResults }: Props) {
-  const [results, setResults] = useState(initialResults)
+  const [results] = useState(initialResults)
 
   async function handleReview(id: string, action: 'approve' | 'override' | 'discard', override?: string) {
     const res = await fetch(`/api/ocr-results/${id}`, {
