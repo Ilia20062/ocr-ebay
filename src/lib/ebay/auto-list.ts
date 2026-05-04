@@ -10,29 +10,59 @@ interface AutoListParams {
   bestMatch: EbayItemSummary
 }
 
+export interface AutoListStep {
+  step: string
+  status: 'ok' | 'fail'
+  detail: string
+  timestamp: string
+}
+
+export interface AutoListResult {
+  success: boolean
+  listingUrl?: string
+  error?: string
+  steps: AutoListStep[]
+}
+
+function log(steps: AutoListStep[], step: string, status: 'ok' | 'fail', detail: string) {
+  const entry: AutoListStep = { step, status, detail, timestamp: new Date().toISOString() }
+  steps.push(entry)
+  if (status === 'ok') {
+    console.log(`[auto-list] ✅ ${step}: ${detail}`)
+  } else {
+    console.error(`[auto-list] ❌ ${step}: ${detail}`)
+  }
+}
+
 /**
  * Automatically creates and publishes an eBay listing from a product search result.
- * Called after a successful product search during the review flow.
- *
- * Steps:
- * 1. Fetch seller's eBay business policies
- * 2. Create a draft listing record in the database
- * 3. Publish to eBay via Inventory API
- * 4. Update the listing record with the eBay item ID and URL
- *
- * On failure, the listing is marked as 'failed' and enqueued for retry.
+ * Returns detailed step-by-step results so the UI can show exactly what happened.
  */
-export async function autoCreateListing({ userId, searchId, bestMatch }: AutoListParams): Promise<{ success: boolean; listingUrl?: string; error?: string }> {
+export async function autoCreateListing({ userId, searchId, bestMatch }: AutoListParams): Promise<AutoListResult> {
+  const steps: AutoListStep[] = []
   const db = getSupabaseAdminClient()
   const sku = `SKU-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`
 
-  const title = bestMatch.title.slice(0, 80) // eBay max 80 chars
+  // Step 1: Parse best match data
+  const title = bestMatch.title.slice(0, 80)
   const price = parseFloat(bestMatch.price.value)
   const currency = bestMatch.price.currency || 'USD'
   const condition = bestMatch.condition || 'USED_EXCELLENT'
   const categoryId = bestMatch.categories?.[0]?.categoryId || ''
 
-  // Create draft listing in DB first
+  log(steps, 'Parse Match', 'ok', `title="${title}", price=${price} ${currency}, condition=${condition}, category=${categoryId || 'NONE'}, sku=${sku}`)
+
+  if (!categoryId) {
+    log(steps, 'Parse Match', 'fail', 'No categoryId found on the matched product. eBay requires a category to list.')
+    return { success: false, error: 'No category found on matched product', steps }
+  }
+
+  if (isNaN(price) || price <= 0) {
+    log(steps, 'Parse Match', 'fail', `Invalid price: "${bestMatch.price.value}"`)
+    return { success: false, error: `Invalid price: ${bestMatch.price.value}`, steps }
+  }
+
+  // Step 2: Create draft listing in DB
   const { data: listing, error: insertError } = await db.from('listings').insert({
     search_id: searchId,
     user_id: userId,
@@ -49,15 +79,27 @@ export async function autoCreateListing({ userId, searchId, bestMatch }: AutoLis
   }).select().single()
 
   if (insertError || !listing) {
-    console.error('[auto-list] Failed to create draft listing:', insertError)
-    return { success: false, error: 'Failed to create draft listing' }
+    log(steps, 'Create Draft', 'fail', `DB insert failed: ${insertError?.message ?? 'unknown error'}`)
+    return { success: false, error: `DB insert failed: ${insertError?.message ?? 'unknown'}`, steps }
   }
 
-  try {
-    // Fetch business policies from eBay
-    const policies = await getBusinessPolicies(userId)
+  log(steps, 'Create Draft', 'ok', `Draft listing created in DB: ${listing.id}`)
 
-    // Publish to eBay
+  // Step 3: Fetch business policies
+  let policies
+  try {
+    policies = await getBusinessPolicies(userId)
+    log(steps, 'Fetch Policies', 'ok', `fulfillment=${policies.fulfillmentPolicyId}, payment=${policies.paymentPolicyId}, return=${policies.returnPolicyId}`)
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err)
+    log(steps, 'Fetch Policies', 'fail', errMsg)
+    await db.from('listings').update({ status: 'failed', error_message: `Policies: ${errMsg}` }).eq('id', listing.id)
+    await enqueueRetry('listing', listing.id, errMsg)
+    return { success: false, error: errMsg, steps }
+  }
+
+  // Step 4: Create inventory item on eBay
+  try {
     const { listingId, listingUrl } = await createAndPublishListing({
       userId,
       sku,
@@ -73,7 +115,9 @@ export async function autoCreateListing({ userId, searchId, bestMatch }: AutoLis
       returnPolicyId: policies.returnPolicyId,
     })
 
-    // Mark as active
+    log(steps, 'Publish to eBay', 'ok', `Listed! listingId=${listingId}, url=${listingUrl}`)
+
+    // Step 5: Update DB with eBay details
     await db.from('listings').update({
       ebay_item_id: listingId,
       ebay_listing_url: listingUrl,
@@ -81,18 +125,28 @@ export async function autoCreateListing({ userId, searchId, bestMatch }: AutoLis
       listed_at: new Date().toISOString(),
     }).eq('id', listing.id)
 
-    console.log(`[auto-list] ✅ Listed on eBay: ${listingUrl}`)
-    return { success: true, listingUrl }
+    log(steps, 'Update DB', 'ok', 'Listing marked as active')
+    return { success: true, listingUrl, steps }
   } catch (err) {
-    const errMsg = String(err)
-    console.error(`[auto-list] ❌ Failed to list on eBay:`, errMsg)
+    // Extract detailed eBay error info
+    let errMsg: string
+    if (err && typeof err === 'object' && 'response' in err) {
+      const axiosErr = err as { response?: { status?: number; data?: unknown }; message?: string }
+      const statusCode = axiosErr.response?.status ?? 'unknown'
+      const responseData = JSON.stringify(axiosErr.response?.data ?? {})
+      errMsg = `eBay API ${statusCode}: ${responseData}`
+    } else {
+      errMsg = err instanceof Error ? err.message : String(err)
+    }
+
+    log(steps, 'Publish to eBay', 'fail', errMsg)
 
     await db.from('listings').update({
       status: 'failed',
-      error_message: errMsg,
+      error_message: errMsg.slice(0, 2000),
     }).eq('id', listing.id)
 
     await enqueueRetry('listing', listing.id, errMsg)
-    return { success: false, error: errMsg }
+    return { success: false, error: errMsg, steps }
   }
 }

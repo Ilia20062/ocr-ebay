@@ -4,6 +4,7 @@ import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { ocrReviewSchema } from '@/lib/validators/ocr'
 import { searchEbayProducts, selectBestMatch } from '@/lib/ebay/search'
 import { autoCreateListing } from '@/lib/ebay/auto-list'
+import type { AutoListResult } from '@/lib/ebay/auto-list'
 import { enqueueRetry } from '@/lib/retry'
 import type { OcrResult } from '@/types/database'
 import type { Json, Database } from '@/types/supabase'
@@ -31,11 +32,25 @@ export const GET = withAuth(async (_req, userId, params) => {
 })
 
 export const PATCH = withAuth(async (req, userId, params) => {
+  const debugLog: string[] = []
+  function debug(msg: string) {
+    const ts = new Date().toISOString()
+    debugLog.push(`[${ts}] ${msg}`)
+    console.log(`[review-flow] ${msg}`)
+  }
+
+  debug(`PATCH /api/ocr-results/${params!.id} — userId=${userId}`)
+
   const body = await req.json()
   const parsed = ocrReviewSchema.safeParse(body)
-  if (!parsed.success) return apiError(parsed.error.message, 422)
+  if (!parsed.success) {
+    debug(`Validation failed: ${parsed.error.message}`)
+    return apiError(parsed.error.message, 422)
+  }
 
   const { action, manual_override } = parsed.data
+  debug(`Action: ${action}${manual_override ? `, override: "${manual_override}"` : ''}`)
+
   const db = getSupabaseAdminClient()
 
   const { data: rawOcr } = await db
@@ -45,11 +60,17 @@ export const PATCH = withAuth(async (req, userId, params) => {
     .single()
 
   const ocrResult = rawOcr as unknown as (OcrResult & { images: { user_id: string } }) | null
-  if (!ocrResult || ocrResult.images.user_id !== userId) return apiError('Not found', 404)
+  if (!ocrResult || ocrResult.images.user_id !== userId) {
+    debug('OCR result not found or not owned by user')
+    return apiError('Not found', 404)
+  }
+
+  debug(`OCR result found: extracted_code="${ocrResult.extracted_code}", image_id=${ocrResult.image_id}`)
 
   if (action === 'discard') {
     await db.from('images').update({ status: 'discarded' }).eq('id', ocrResult.image_id)
-    return NextResponse.json({ discarded: true })
+    debug('Image discarded')
+    return NextResponse.json({ success: true, discarded: true, debugLog })
   }
 
   type OcrUpdate = Database['public']['Tables']['ocr_results']['Update']
@@ -62,44 +83,103 @@ export const PATCH = withAuth(async (req, userId, params) => {
 
   await db.from('ocr_results').update(updates).eq('id', params!.id)
   await db.from('images').update({ status: 'approved' }).eq('id', ocrResult.image_id)
+  debug('OCR result approved & image status updated')
 
   const finalCode = action === 'override' ? manual_override! : ocrResult.extracted_code
+  debug(`Final code for search: "${finalCode}"`)
 
-  let searchResult: 'found' | 'not_found' | 'error' = 'not_found'
-  let listingResult: { success: boolean; listingUrl?: string; error?: string } | undefined
+  let searchResult: 'found' | 'not_found' | 'no_code' | 'search_error' = 'no_code'
+  let listingResult: AutoListResult | undefined
+  let searchDebug: { itemCount?: number; bestMatchTitle?: string; bestMatchId?: string } = {}
 
-  if (finalCode) {
+  if (!finalCode) {
+    debug('No final code — skipping product search and listing')
+  } else {
     try {
-      const { data: search } = await db.from('product_searches').insert({
+      debug(`Creating product_search record for query="${finalCode}"`)
+      const { data: search, error: searchInsertErr } = await db.from('product_searches').insert({
         ocr_result_id: params!.id,
         search_query: finalCode,
         status: 'pending',
       }).select().single()
 
-      if (search) {
-        const items = await searchEbayProducts(userId, finalCode)
-        const best = selectBestMatch(items, finalCode)
-        await db.from('product_searches').update({
-          status: items.length > 0 ? 'success' : 'no_results',
-          result_count: items.length,
-          results_raw: items as unknown as Json,
-          selected_item_id: best?.itemId ?? null,
-        }).eq('id', search.id)
+      if (searchInsertErr || !search) {
+        debug(`Failed to create product_search record: ${searchInsertErr?.message ?? 'unknown'}`)
+        searchResult = 'search_error'
+      } else {
+        debug(`Product search record created: ${search.id}`)
 
-        // Auto-create eBay listing if a matching product was found
-        if (best) {
-          searchResult = 'found'
-          // Wait for listing creation to provide immediate feedback to the UI
-          listingResult = await autoCreateListing({ userId, searchId: search.id, bestMatch: best })
+        // Check eBay connection exists
+        const { data: conn } = await db
+          .from('ebay_connections')
+          .select('id, ebay_user_id, token_expires_at')
+          .eq('user_id', userId)
+          .single()
+
+        if (!conn) {
+          debug('❌ No eBay connection found for this user! Cannot search or list.')
+          searchResult = 'search_error'
+          await db.from('product_searches').update({ status: 'failed', error_message: 'No eBay connection' }).eq('id', search.id)
         } else {
-          searchResult = 'not_found'
+          debug(`eBay connection found: ebay_user_id=${conn.ebay_user_id}, token_expires_at=${conn.token_expires_at}`)
+
+          const tokenExpiry = new Date(conn.token_expires_at)
+          if (tokenExpiry < new Date()) {
+            debug(`⚠️ eBay token expired at ${conn.token_expires_at}`)
+          }
+
+          debug(`Searching eBay for "${finalCode}"...`)
+          const items = await searchEbayProducts(userId, finalCode)
+          debug(`eBay search returned ${items.length} items`)
+          searchDebug.itemCount = items.length
+
+          const best = selectBestMatch(items, finalCode)
+          
+          await db.from('product_searches').update({
+            status: items.length > 0 ? 'success' : 'no_results',
+            result_count: items.length,
+            results_raw: items as unknown as Json,
+            selected_item_id: best?.itemId ?? null,
+          }).eq('id', search.id)
+
+          if (best) {
+            debug(`Best match: "${best.title}" (${best.itemId}), price=${best.price.value} ${best.price.currency}, condition=${best.condition}`)
+            searchDebug.bestMatchTitle = best.title
+            searchDebug.bestMatchId = best.itemId
+            searchResult = 'found'
+
+            debug('Starting auto-listing...')
+            listingResult = await autoCreateListing({ userId, searchId: search.id, bestMatch: best })
+            debug(`Auto-listing result: success=${listingResult.success}${listingResult.error ? `, error=${listingResult.error}` : ''}${listingResult.listingUrl ? `, url=${listingResult.listingUrl}` : ''}`)
+          } else {
+            debug(`No matching product found for "${finalCode}" — ${items.length} items returned but none matched`)
+            searchResult = 'not_found'
+          }
         }
       }
     } catch (err) {
-      searchResult = 'error'
-      await enqueueRetry('product_search', params!.id, String(err))
+      const errMsg = err instanceof Error ? err.message : String(err)
+      
+      // Try to extract eBay API response for more detail
+      let fullError = errMsg
+      if (err && typeof err === 'object' && 'response' in err) {
+        const axiosErr = err as { response?: { status?: number; data?: unknown } }
+        fullError = `HTTP ${axiosErr.response?.status}: ${JSON.stringify(axiosErr.response?.data)}`
+      }
+      
+      debug(`❌ Error during search/listing: ${fullError}`)
+      searchResult = 'search_error'
+      await enqueueRetry('product_search', params!.id, fullError)
     }
   }
 
-  return NextResponse.json({ success: true, searchResult, listingResult })
+  debug(`=== DONE === searchResult=${searchResult}, listingSuccess=${listingResult?.success ?? 'N/A'}`)
+
+  return NextResponse.json({
+    success: true,
+    searchResult,
+    searchDebug,
+    listingResult,
+    debugLog,
+  })
 })
