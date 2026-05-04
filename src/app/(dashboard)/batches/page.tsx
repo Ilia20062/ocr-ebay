@@ -13,25 +13,38 @@ const statusColors: Record<string, string> = {
   discarded: 'bg-gray-100 text-gray-400',
 }
 
-const batchStatusColors: Record<string, string> = {
-  pending: 'bg-gray-100 text-gray-600',
-  processing: 'bg-blue-100 text-blue-600',
-  awaiting_review: 'bg-yellow-100 text-yellow-700',
-  completed: 'bg-green-100 text-green-700',
-  failed: 'bg-red-100 text-red-700',
-}
+
 
 export default async function BatchesPage() {
+  type BatchRow = {
+    id: string
+    user_id: string
+    status: string
+    total_images: number
+    processed: number
+    created_at: string
+  }
+
+  type ImageRow = {
+    id: string
+    batch_id: string
+    original_filename: string | null
+    status: string
+    error_message: string | null
+    created_at: string
+    ocr_results: { extracted_code: string | null; confidence: number | null; auto_approved: boolean }[] | null
+  }
+
   let errorMsg: string | null = null
-  let batches: any[] | null = null
-  let batchStatusColors: Record<string, string> = {
+  let batches: BatchRow[] | null = null
+  const batchStatusColors: Record<string, string> = {
     pending: 'bg-gray-100 text-gray-600',
     processing: 'bg-blue-100 text-blue-600',
     awaiting_review: 'bg-yellow-100 text-yellow-700',
     completed: 'bg-green-100 text-green-700',
     failed: 'bg-red-100 text-red-700',
   }
-  let imagesByBatch = new Map<string, any[]>()
+  const imagesByBatch = new Map<string, ImageRow[]>()
   let errStack: string | undefined = undefined
 
   try {
@@ -55,11 +68,11 @@ export default async function BatchesPage() {
       throw new Error(`Failed to fetch batches: ${batchErr.message}`)
     }
 
-    batches = b
+    batches = b as BatchRow[]
 
     const batchIds = (batches ?? []).map((b) => b.id)
 
-    let images: any[] = []
+    let images: ImageRow[] = []
     if (batchIds.length > 0) {
       const { data, error: imageErr } = await db
         .from('images')
@@ -70,7 +83,7 @@ export default async function BatchesPage() {
       if (imageErr) {
         throw new Error(`Failed to fetch images: ${imageErr.message}`)
       }
-      images = (data ?? []) as any[]
+      images = (data ?? []) as unknown as ImageRow[]
     }
 
     for (const img of images) {
