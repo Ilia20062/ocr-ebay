@@ -65,6 +65,9 @@ export const PATCH = withAuth(async (req, userId, params) => {
 
   const finalCode = action === 'override' ? manual_override! : ocrResult.extracted_code
 
+  let searchResult: 'found' | 'not_found' | 'error' = 'not_found'
+  let listingResult: { success: boolean; listingUrl?: string; error?: string } | undefined
+
   if (finalCode) {
     try {
       const { data: search } = await db.from('product_searches').insert({
@@ -85,15 +88,18 @@ export const PATCH = withAuth(async (req, userId, params) => {
 
         // Auto-create eBay listing if a matching product was found
         if (best) {
-          // Fire-and-forget: don't block the review response
-          autoCreateListing({ userId, searchId: search.id, bestMatch: best })
-            .catch((err) => console.error('[review] auto-list background error:', err))
+          searchResult = 'found'
+          // Wait for listing creation to provide immediate feedback to the UI
+          listingResult = await autoCreateListing({ userId, searchId: search.id, bestMatch: best })
+        } else {
+          searchResult = 'not_found'
         }
       }
     } catch (err) {
+      searchResult = 'error'
       await enqueueRetry('product_search', params!.id, String(err))
     }
   }
 
-  return NextResponse.json({ success: true })
+  return NextResponse.json({ success: true, searchResult, listingResult })
 })

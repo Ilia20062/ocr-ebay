@@ -42,13 +42,13 @@ export const POST = withAuth(async (req, userId) => {
       selected_item_id: best?.itemId ?? null,
     }).eq('id', search.id)
 
+    let listingResult;
     // Auto-create eBay listing if a matching product was found
     if (best) {
-      autoCreateListing({ userId, searchId: search.id, bestMatch: best })
-        .catch((err) => console.error('[search] auto-list background error:', err))
+      listingResult = await autoCreateListing({ userId, searchId: search.id, bestMatch: best })
     }
 
-    return NextResponse.json({ ...search, items, selected: best }, { status: 201 })
+    return NextResponse.json({ ...search, items, selected: best, listingResult }, { status: 201 })
   } catch (err) {
     await db.from('product_searches').update({ status: 'failed', error_message: String(err) }).eq('id', search.id)
     await enqueueRetry('product_search', search.id, String(err))

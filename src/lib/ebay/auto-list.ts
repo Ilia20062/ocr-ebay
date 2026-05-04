@@ -22,7 +22,7 @@ interface AutoListParams {
  *
  * On failure, the listing is marked as 'failed' and enqueued for retry.
  */
-export async function autoCreateListing({ userId, searchId, bestMatch }: AutoListParams) {
+export async function autoCreateListing({ userId, searchId, bestMatch }: AutoListParams): Promise<{ success: boolean; listingUrl?: string; error?: string }> {
   const db = getSupabaseAdminClient()
   const sku = `SKU-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`
 
@@ -50,7 +50,7 @@ export async function autoCreateListing({ userId, searchId, bestMatch }: AutoLis
 
   if (insertError || !listing) {
     console.error('[auto-list] Failed to create draft listing:', insertError)
-    return
+    return { success: false, error: 'Failed to create draft listing' }
   }
 
   try {
@@ -82,6 +82,7 @@ export async function autoCreateListing({ userId, searchId, bestMatch }: AutoLis
     }).eq('id', listing.id)
 
     console.log(`[auto-list] ✅ Listed on eBay: ${listingUrl}`)
+    return { success: true, listingUrl }
   } catch (err) {
     const errMsg = String(err)
     console.error(`[auto-list] ❌ Failed to list on eBay:`, errMsg)
@@ -92,5 +93,6 @@ export async function autoCreateListing({ userId, searchId, bestMatch }: AutoLis
     }).eq('id', listing.id)
 
     await enqueueRetry('listing', listing.id, errMsg)
+    return { success: false, error: errMsg }
   }
 }

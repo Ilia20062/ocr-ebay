@@ -12,12 +12,12 @@ export default function ReviewQueue({ initialResults }: Props) {
   const [results, setResults] = useState(initialResults)
 
   async function handleReview(id: string, action: 'approve' | 'override' | 'discard', override?: string) {
-    await fetch(`/api/ocr-results/${id}`, {
+    const res = await fetch(`/api/ocr-results/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, manual_override: override }),
     })
-    // Card marks itself done; no state removal needed until refresh
+    return res.json()
   }
 
   if (results.length === 0) {

@@ -5,14 +5,14 @@ import type { OcrResult } from '@/types/database'
 
 interface Props {
   result: OcrResult & { signed_url?: string; final_code?: string | null }
-  onSubmit: (id: string, action: 'approve' | 'override' | 'discard', override?: string) => Promise<void>
+  onSubmit: (id: string, action: 'approve' | 'override' | 'discard', override?: string) => Promise<any>
 }
 
 export default function ReviewCard({ result, onSubmit }: Props) {
   const [action, setAction] = useState<'approve' | 'override' | 'discard'>('approve')
   const [manualCode, setManualCode] = useState(result.extracted_code ?? '')
   const [loading, setLoading] = useState(false)
-  const [done, setDone] = useState(false)
+  const [doneState, setDoneState] = useState<{ status: 'success' | 'error' | 'warning'; message: string; url?: string } | null>(null)
 
   const confidence = result.confidence ? Math.round(result.confidence * 100) : 0
   const isDuplicate = (result.all_candidates as { text: string }[] | null)?.some(
@@ -21,15 +21,45 @@ export default function ReviewCard({ result, onSubmit }: Props) {
 
   async function handleSubmit() {
     setLoading(true)
-    await onSubmit(result.id, action, action === 'override' ? manualCode : undefined)
-    setDone(true)
+    try {
+      const res = await onSubmit(result.id, action, action === 'override' ? manualCode : undefined)
+      
+      if (action === 'discard') {
+        setDoneState({ status: 'warning', message: 'Image discarded' })
+      } else {
+        if (res.listingResult) {
+          if (res.listingResult.success) {
+            setDoneState({ status: 'success', message: 'Listed on eBay!', url: res.listingResult.listingUrl })
+          } else {
+            setDoneState({ status: 'error', message: `Listing failed: ${res.listingResult.error}` })
+          }
+        } else if (res.searchResult === 'not_found') {
+          setDoneState({ status: 'error', message: 'No matching product found on eBay. Checked OCR code.' })
+        } else {
+          setDoneState({ status: 'success', message: 'Reviewed successfully.' })
+        }
+      }
+    } catch (err) {
+      setDoneState({ status: 'error', message: 'An error occurred during submission.' })
+    }
     setLoading(false)
   }
 
-  if (done) {
+  if (doneState) {
+    const isSuccess = doneState.status === 'success'
+    const isError = doneState.status === 'error'
+    const isWarning = doneState.status === 'warning'
+    
     return (
-      <div className="bg-white rounded-xl border border-green-200 p-5 opacity-60">
-        <p className="text-sm text-green-700 font-medium">Reviewed ✓</p>
+      <div className={`rounded-xl border p-5 ${isSuccess ? 'bg-green-50 border-green-200' : isError ? 'bg-red-50 border-red-200' : 'bg-yellow-50 border-yellow-200'}`}>
+        <p className={`font-medium ${isSuccess ? 'text-green-700' : isError ? 'text-red-700' : 'text-yellow-700'}`}>
+          {isSuccess ? '✓ ' : isError ? '❌ ' : '⚠️ '}{doneState.message}
+        </p>
+        {doneState.url && (
+          <a href={doneState.url} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-sm text-blue-600 hover:underline">
+            View on eBay ↗
+          </a>
+        )}
       </div>
     )
   }
