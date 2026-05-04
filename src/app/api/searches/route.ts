@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withAuth, apiError } from '@/lib/middleware'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { searchEbayProducts, selectBestMatch } from '@/lib/ebay/search'
+import { autoCreateListing } from '@/lib/ebay/auto-list'
 import { enqueueRetry } from '@/lib/retry'
 import type { Json } from '@/types/supabase'
 
@@ -40,6 +41,12 @@ export const POST = withAuth(async (req, userId) => {
       results_raw: items as unknown as Json,
       selected_item_id: best?.itemId ?? null,
     }).eq('id', search.id)
+
+    // Auto-create eBay listing if a matching product was found
+    if (best) {
+      autoCreateListing({ userId, searchId: search.id, bestMatch: best })
+        .catch((err) => console.error('[search] auto-list background error:', err))
+    }
 
     return NextResponse.json({ ...search, items, selected: best }, { status: 201 })
   } catch (err) {

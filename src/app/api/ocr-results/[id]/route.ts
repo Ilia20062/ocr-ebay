@@ -3,6 +3,7 @@ import { withAuth, apiError } from '@/lib/middleware'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { ocrReviewSchema } from '@/lib/validators/ocr'
 import { searchEbayProducts, selectBestMatch } from '@/lib/ebay/search'
+import { autoCreateListing } from '@/lib/ebay/auto-list'
 import { enqueueRetry } from '@/lib/retry'
 import type { OcrResult } from '@/types/database'
 import type { Json, Database } from '@/types/supabase'
@@ -81,6 +82,13 @@ export const PATCH = withAuth(async (req, userId, params) => {
           results_raw: items as unknown as Json,
           selected_item_id: best?.itemId ?? null,
         }).eq('id', search.id)
+
+        // Auto-create eBay listing if a matching product was found
+        if (best) {
+          // Fire-and-forget: don't block the review response
+          autoCreateListing({ userId, searchId: search.id, bestMatch: best })
+            .catch((err) => console.error('[review] auto-list background error:', err))
+        }
       }
     } catch (err) {
       await enqueueRetry('product_search', params!.id, String(err))
