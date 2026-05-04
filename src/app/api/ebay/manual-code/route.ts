@@ -10,6 +10,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No code provided' }, { status: 400 })
     }
 
+    // Safely decode the code in case the user copied it from the URL bar (e.g. %5E instead of ^)
+    // If it's already decoded, decodeURIComponent is safe as long as there are no stray % signs.
+    // To be perfectly safe, we handle potential decode errors gracefully.
+    let cleanCode = code.trim()
+    try {
+      if (cleanCode.includes('%')) {
+        cleanCode = decodeURIComponent(cleanCode)
+      }
+    } catch (e) {
+      // Ignore decode errors and try with the raw string
+    }
+
     const supabase = await getSupabaseServerClient()
     const { data: { user } } = await supabase.auth.getUser()
     
@@ -18,7 +30,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Exchange the manually submitted code for a real access token
-    const tokens = await exchangeCodeForTokens(code)
+    const tokens = await exchangeCodeForTokens(cleanCode)
     
     // Save to database
     await saveConnection(user.id, tokens.access_token, tokens.refresh_token, tokens.expires_in)
