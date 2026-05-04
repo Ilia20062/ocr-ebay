@@ -14,6 +14,9 @@ interface Props {
 
 export default function EbaySettings({ connection }: Props) {
   const [disconnecting, setDisconnecting] = useState(false)
+  const [manualCode, setManualCode] = useState('')
+  const [submittingCode, setSubmittingCode] = useState(false)
+  const [manualError, setManualError] = useState<string | null>(null)
 
   async function handleDisconnect() {
     if (!confirm('Disconnect your eBay store? Active listings will remain on eBay.')) return
@@ -22,22 +25,73 @@ export default function EbaySettings({ connection }: Props) {
     window.location.reload()
   }
 
+  async function handleManualSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!manualCode.trim()) return
+    
+    setSubmittingCode(true)
+    setManualError(null)
+    
+    try {
+      const res = await fetch('/api/ebay/manual-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: manualCode.trim() })
+      })
+      
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to exchange code')
+      
+      window.location.reload()
+    } catch (err) {
+      setManualError(err instanceof Error ? err.message : String(err))
+      setSubmittingCode(false)
+    }
+  }
+
   if (!connection) {
     return (
-      <div className="max-w-md bg-white rounded-xl border border-gray-200 p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <span className="text-2xl">🛒</span>
-          <div>
-            <h3 className="font-semibold text-gray-900">Connect eBay Store</h3>
-            <p className="text-sm text-gray-500">Link your eBay account to enable auto-listing</p>
+      <div className="max-w-md bg-white rounded-xl border border-gray-200 p-6 space-y-6">
+        <div>
+          <div className="flex items-center gap-3 mb-4">
+            <span className="text-2xl">🛒</span>
+            <div>
+              <h3 className="font-semibold text-gray-900">Connect eBay Store</h3>
+              <p className="text-sm text-gray-500">Link your eBay account to enable auto-listing</p>
+            </div>
           </div>
+          <a
+            href="/api/ebay/connect"
+            className="inline-block w-full text-center py-2 px-4 bg-yellow-400 hover:bg-yellow-500 text-gray-900 font-semibold rounded-lg text-sm transition-colors"
+          >
+            Connect with eBay
+          </a>
         </div>
-        <a
-          href="/api/ebay/connect"
-          className="inline-block w-full text-center py-2 px-4 bg-yellow-400 hover:bg-yellow-500 text-gray-900 font-semibold rounded-lg text-sm transition-colors"
-        >
-          Connect with eBay
-        </a>
+
+        <div className="pt-4 border-t border-gray-100">
+          <h4 className="text-sm font-medium text-gray-900 mb-2">Fallback: Manual Code Entry</h4>
+          <p className="text-xs text-gray-500 mb-3">
+            If eBay did not automatically redirect you back, copy the long code provided by eBay (starts with <code>v^1...</code>) and paste it below:
+          </p>
+          <form onSubmit={handleManualSubmit} className="space-y-2">
+            <input
+              type="text"
+              value={manualCode}
+              onChange={(e) => setManualCode(e.target.value)}
+              placeholder="v^1.1#i^1#r^0..."
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-yellow-400"
+              required
+            />
+            {manualError && <p className="text-xs text-red-600">{manualError}</p>}
+            <button
+              type="submit"
+              disabled={submittingCode || !manualCode.trim()}
+              className="w-full py-2 px-4 bg-gray-900 hover:bg-gray-800 text-white font-semibold rounded-lg text-sm transition-colors disabled:opacity-50"
+            >
+              {submittingCode ? 'Submitting...' : 'Submit Code'}
+            </button>
+          </form>
+        </div>
       </div>
     )
   }
