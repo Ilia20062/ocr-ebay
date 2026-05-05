@@ -28,6 +28,7 @@ export interface EbayInventoryItem {
     title: string
     description: string
     aspects?: Record<string, string[]>
+    imageUrls?: string[]
   }
   condition: string
   availability: {

@@ -14,6 +14,7 @@ interface CreateListingParams {
   fulfillmentPolicyId: string
   paymentPolicyId: string
   returnPolicyId: string
+  imageUrls: string[]
 }
 
 export async function createOrUpdateInventoryItem(
@@ -94,16 +95,21 @@ export async function createAndPublishListing(params: CreateListingParams): Prom
   const {
     userId, sku, title, description, price, currency,
     quantity, condition, categoryId,
-    fulfillmentPolicyId, paymentPolicyId, returnPolicyId
+    fulfillmentPolicyId, paymentPolicyId, returnPolicyId,
+    imageUrls,
   } = params
 
   console.log(`[inventory] === createAndPublishListing START ===`)
-  console.log(`[inventory] params: sku=${sku}, title="${title}", price=${price} ${currency}, qty=${quantity}, condition=${condition}, category=${categoryId}`)
+  console.log(`[inventory] params: sku=${sku}, title="${title}", price=${price} ${currency}, qty=${quantity}, condition=${condition}, category=${categoryId}, images=${imageUrls.length}`)
   console.log(`[inventory] policies: fulfillment=${fulfillmentPolicyId}, payment=${paymentPolicyId}, return=${returnPolicyId}`)
 
   const inventoryItem: EbayInventoryItem = {
     sku,
-    product: { title, description },
+    product: {
+      title,
+      description,
+      ...(imageUrls.length > 0 ? { imageUrls } : {}),
+    },
     condition: condition.toUpperCase().replace(/\s/g, '_'),
     availability: { shipToLocationAvailability: { quantity } },
   }

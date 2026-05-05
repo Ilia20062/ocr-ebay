@@ -8,6 +8,7 @@ interface AutoListParams {
   userId: string
   searchId: string
   bestMatch: EbayItemSummary
+  imageUrls: string[]
 }
 
 export interface AutoListStep {
@@ -38,7 +39,7 @@ function log(steps: AutoListStep[], step: string, status: 'ok' | 'fail', detail:
  * Automatically creates and publishes an eBay listing from a product search result.
  * Returns detailed step-by-step results so the UI can show exactly what happened.
  */
-export async function autoCreateListing({ userId, searchId, bestMatch }: AutoListParams): Promise<AutoListResult> {
+export async function autoCreateListing({ userId, searchId, bestMatch, imageUrls }: AutoListParams): Promise<AutoListResult> {
   const steps: AutoListStep[] = []
   const db = getSupabaseAdminClient()
   const sku = `SKU-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`
@@ -51,6 +52,7 @@ export async function autoCreateListing({ userId, searchId, bestMatch }: AutoLis
   const categoryId = bestMatch.categories?.[0]?.categoryId || ''
 
   log(steps, 'Parse Match', 'ok', `title="${title}", price=${price} ${currency}, condition=${condition}, category=${categoryId || 'NONE'}, sku=${sku}`)
+  log(steps, 'Image URLs', 'ok', `${imageUrls.length} image(s) attached to listing`)
 
   if (!categoryId) {
     log(steps, 'Parse Match', 'fail', 'No categoryId found on the matched product. eBay requires a category to list.')
@@ -113,6 +115,7 @@ export async function autoCreateListing({ userId, searchId, bestMatch }: AutoLis
       fulfillmentPolicyId: policies.fulfillmentPolicyId,
       paymentPolicyId: policies.paymentPolicyId,
       returnPolicyId: policies.returnPolicyId,
+      imageUrls,
     })
 
     log(steps, 'Publish to eBay', 'ok', `Listed! listingId=${listingId}, url=${listingUrl}`)

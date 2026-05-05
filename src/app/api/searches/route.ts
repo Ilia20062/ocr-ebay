@@ -45,7 +45,7 @@ export const POST = withAuth(async (req, userId) => {
     let listingResult;
     // Auto-create eBay listing if a matching product was found
     if (best) {
-      listingResult = await autoCreateListing({ userId, searchId: search.id, bestMatch: best })
+      listingResult = await autoCreateListing({ userId, searchId: search.id, bestMatch: best, imageUrls: [] })
     }
 
     return NextResponse.json({ ...search, items, selected: best, listingResult }, { status: 201 })

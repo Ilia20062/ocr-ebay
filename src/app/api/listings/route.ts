@@ -66,6 +66,7 @@ export const POST = withAuth(async (req, userId) => {
       fulfillmentPolicyId: data.fulfillment_policy_id,
       paymentPolicyId: data.payment_policy_id,
       returnPolicyId: data.return_policy_id,
+      imageUrls: [],
     })
 
     await db.from('listings').update({
