@@ -65,20 +65,46 @@ export const PATCH = withAuth(async (req, userId, params) => {
   const groupImages = images ?? []
   debug(`${groupImages.length} image(s) in group`)
 
-  const { data: search, error: searchErr } = await db
+  // Reuse an existing search row for this batch (e.g. left over from a prior failed attempt).
+  // If none exists, create one. Either way we end up with a single row per batch.
+  const { data: existingSearch } = await db
     .from('product_searches')
-    .insert({ batch_id: batchId, search_query: finalCode, status: 'pending' })
-    .select()
-    .single()
+    .select('*')
+    .eq('batch_id', batchId)
+    .maybeSingle()
 
-  if (searchErr || !search) {
-    debug(`Failed to create product_searches row: ${searchErr?.message ?? 'unknown'}`)
-    await db.from('upload_batches').update({ status: 'failed' }).eq('id', batchId)
-    return NextResponse.json({
-      success: true,
-      searchResult: 'search_error',
-      debugLog,
-    })
+  let search = existingSearch
+  if (search) {
+    debug(`Reusing existing product_searches row ${search.id} (status=${search.status}, attempt_count=${search.attempt_count})`)
+    const { data: updated, error: updateErr } = await db
+      .from('product_searches')
+      .update({
+        search_query: finalCode,
+        status: 'pending',
+        attempt_count: (search.attempt_count ?? 1) + 1,
+        error_message: null,
+      })
+      .eq('id', search.id)
+      .select()
+      .single()
+    if (updateErr || !updated) {
+      debug(`Failed to reset product_searches row: ${updateErr?.message ?? 'unknown'}`)
+      await db.from('upload_batches').update({ status: 'awaiting_review' }).eq('id', batchId)
+      return NextResponse.json({ success: true, searchResult: 'search_error', debugLog })
+    }
+    search = updated
+  } else {
+    const { data: created, error: searchErr } = await db
+      .from('product_searches')
+      .insert({ batch_id: batchId, search_query: finalCode, status: 'pending' })
+      .select()
+      .single()
+    if (searchErr || !created) {
+      debug(`Failed to create product_searches row: ${searchErr?.message ?? 'unknown'}`)
+      await db.from('upload_batches').update({ status: 'awaiting_review' }).eq('id', batchId)
+      return NextResponse.json({ success: true, searchResult: 'search_error', debugLog })
+    }
+    search = created
   }
 
   let searchResult: 'found' | 'not_found' | 'no_code' | 'search_error' = 'no_code'

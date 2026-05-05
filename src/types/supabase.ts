@@ -36,7 +36,7 @@ export interface Database {
       product_searches: {
         Row: { id: string; batch_id: string; search_query: string; search_provider: string; status: string; result_count: number | null; results_raw: Json | null; selected_item_id: string | null; error_message: string | null; attempt_count: number; created_at: string; updated_at: string }
         Insert: { id?: string; batch_id: string; search_query: string; search_provider?: string; status?: string; result_count?: number | null; results_raw?: Json | null; selected_item_id?: string | null; error_message?: string | null; attempt_count?: number; created_at?: string; updated_at?: string }
-        Update: { status?: string; result_count?: number | null; results_raw?: Json | null; selected_item_id?: string | null; error_message?: string | null; attempt_count?: number; updated_at?: string }
+        Update: { search_query?: string; status?: string; result_count?: number | null; results_raw?: Json | null; selected_item_id?: string | null; error_message?: string | null; attempt_count?: number; updated_at?: string }
         Relationships: []
       }
       listings: {
