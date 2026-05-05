@@ -19,7 +19,11 @@ ALTER TABLE upload_batches
   ADD CONSTRAINT upload_batches_status_check
   CHECK (status IN ('pending','processing','awaiting_review','approved','listed','failed','discarded'));
 
--- product_searches now hangs off the batch, not a single ocr_result
+-- product_searches now hangs off the batch, not a single ocr_result.
+-- The old RLS policy referenced ocr_result_id; drop it before dropping the column,
+-- then recreate it against batch_id.
+DROP POLICY IF EXISTS "product_searches_own" ON product_searches;
+
 ALTER TABLE product_searches
   DROP CONSTRAINT IF EXISTS product_searches_ocr_result_id_fkey;
 ALTER TABLE product_searches
@@ -27,6 +31,11 @@ ALTER TABLE product_searches
 ALTER TABLE product_searches
   ADD COLUMN batch_id UUID NOT NULL REFERENCES upload_batches(id) ON DELETE CASCADE,
   ADD CONSTRAINT product_searches_batch_unique UNIQUE (batch_id);
+
+-- Recreate the RLS policy: users see searches for batches they own
+CREATE POLICY "product_searches_own" ON product_searches FOR ALL USING (
+  batch_id IN (SELECT id FROM upload_batches WHERE user_id = auth.uid())
+);
 
 CREATE INDEX IF NOT EXISTS product_searches_batch_id_idx ON product_searches(batch_id);
 CREATE INDEX IF NOT EXISTS upload_batches_status_idx ON upload_batches(status);
