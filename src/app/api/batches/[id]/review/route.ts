@@ -86,6 +86,7 @@ export const PATCH = withAuth(async (req, userId, params) => {
   const searchDebug: { itemCount?: number; bestMatchTitle?: string; bestMatchId?: string } = {}
 
   try {
+    debug(`Calling searchEbayProducts(query="${finalCode}")`)
     const items = await searchEbayProducts(userId, finalCode)
     debug(`eBay returned ${items.length} item(s)`)
     searchDebug.itemCount = items.length
@@ -117,20 +118,28 @@ export const PATCH = withAuth(async (req, userId, params) => {
         imageUrls,
       })
 
+      // Only mark listed/failed when an actual listing was attempted.
       await db
         .from('upload_batches')
-        .update({ status: listingResult.success ? 'listed' : 'failed' })
+        .update({ status: listingResult.success ? 'listed' : 'awaiting_review' })
         .eq('id', batchId)
+      if (!listingResult.success) {
+        debug(`Listing failed; batch left at awaiting_review so you can retry.`)
+      }
     } else {
+      // No match on eBay — keep the batch reviewable so the user can override or discard.
       searchResult = 'not_found'
-      await db.from('upload_batches').update({ status: 'failed' }).eq('id', batchId)
+      await db.from('upload_batches').update({ status: 'awaiting_review' }).eq('id', batchId)
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
+    const stack = err instanceof Error && err.stack ? err.stack.split('\n').slice(0, 6).join('\n') : ''
     debug(`Search/list error: ${msg}`)
+    if (stack) debug(`Stack:\n${stack}`)
     searchResult = 'search_error'
     await enqueueRetry('product_search', search.id, msg)
-    await db.from('upload_batches').update({ status: 'failed' }).eq('id', batchId)
+    // Leave batch in awaiting_review on transient failure so the user can retry.
+    await db.from('upload_batches').update({ status: 'awaiting_review' }).eq('id', batchId)
   }
 
   return NextResponse.json({
