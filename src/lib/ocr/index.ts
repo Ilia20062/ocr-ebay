@@ -3,8 +3,6 @@ import { runTesseractOcr } from './tesseract'
 import { selectTopCandidate } from './code-extractor'
 import type { OcrProviderResult, OcrCandidate } from '@/types/ocr'
 
-export const OCR_AUTO_APPROVE_THRESHOLD = 0.90
-
 const OCR_TOTAL_TIMEOUT_MS = 60_000
 
 export async function runOcr(base64Content: string, mimeType = 'image/jpeg'): Promise<OcrProviderResult> {
@@ -70,11 +68,4 @@ async function _runOcr(base64Content: string, mimeType: string): Promise<OcrProv
     topCandidate,
     provider: 'google_vision',
   }
-}
-
-export function shouldAutoApprove(result: OcrProviderResult): boolean {
-  return (
-    result.topCandidate !== null &&
-    result.topCandidate.confidence >= OCR_AUTO_APPROVE_THRESHOLD
-  )
 }

@@ -1,12 +1,12 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { withCron } from '@/lib/middleware'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
-import { runOcr, shouldAutoApprove } from '@/lib/ocr'
+import { runOcr } from '@/lib/ocr'
 import { searchEbayProducts, selectBestMatch } from '@/lib/ebay/search'
 import { markRetrySucceeded, markRetryExhausted } from '@/lib/retry'
 import type { Json, Database } from '@/types/supabase'
 
-export const POST = withCron(async (_req) => {
+export const POST = withCron(async () => {
   const db = getSupabaseAdminClient()
 
   const { data: jobs } = await db
@@ -23,7 +23,6 @@ export const POST = withCron(async (_req) => {
   let failed = 0
 
   for (const job of jobs) {
-    // Mark as processing
     await db.from('retry_queue').update({ status: 'processing' }).eq('id', job.id)
 
     try {
@@ -35,7 +34,7 @@ export const POST = withCron(async (_req) => {
 
       await markRetrySucceeded(job.entity_id)
       succeeded++
-    } catch (err) {
+    } catch {
       const nextAttempt = job.attempt_count + 1
       if (nextAttempt >= job.max_attempts) {
         await markRetryExhausted(job.entity_id)
@@ -64,7 +63,6 @@ async function retryOcr(imageId: string, db: ReturnType<typeof getSupabaseAdminC
   if (!signedUrl?.signedUrl) throw new Error('Cannot get signed URL')
 
   const result = await runOcr(signedUrl.signedUrl)
-  const autoApproved = shouldAutoApprove(result)
 
   const ocrInsert: Database['public']['Tables']['ocr_results']['Insert'] = {
     image_id: imageId,
@@ -74,24 +72,24 @@ async function retryOcr(imageId: string, db: ReturnType<typeof getSupabaseAdminC
     all_candidates: result.candidates as unknown as Json,
     confidence: result.topCandidate?.confidence ?? null,
     provider: result.provider,
-    auto_approved: autoApproved,
+    auto_approved: false,
   }
   const { error } = await db.from('ocr_results').upsert(ocrInsert)
 
   if (error) throw error
-  await db.from('images').update({ status: autoApproved ? 'approved' : 'needs_review' }).eq('id', imageId)
+  await db.from('images').update({ status: 'ocr_done' }).eq('id', imageId)
 }
 
 async function retrySearch(searchId: string, db: ReturnType<typeof getSupabaseAdminClient>) {
   const { data: search } = await db
     .from('product_searches')
-    .select('search_query, ocr_results!inner(images!inner(user_id))')
+    .select('search_query, batch_id, upload_batches!inner(user_id)')
     .eq('id', searchId)
     .single()
 
   if (!search) throw new Error('Search not found')
-  const rawSearch = search as unknown as { search_query: string; ocr_results: { images: { user_id: string } } }
-  const userId = rawSearch.ocr_results.images.user_id
+  const rawSearch = search as unknown as { search_query: string; batch_id: string; upload_batches: { user_id: string } }
+  const userId = rawSearch.upload_batches.user_id
 
   const items = await searchEbayProducts(userId, rawSearch.search_query)
   const best = selectBestMatch(items, rawSearch.search_query)

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { withAuth, apiError } from '@/lib/middleware'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { searchEbayProducts, selectBestMatch } from '@/lib/ebay/search'
@@ -8,13 +8,13 @@ export const POST = withAuth(async (_req, userId, params) => {
   const db = getSupabaseAdminClient()
   const { data } = await db
     .from('product_searches')
-    .select('id, search_query, attempt_count, ocr_results!inner(images!inner(user_id))')
+    .select('id, search_query, attempt_count, upload_batches!inner(user_id)')
     .eq('id', params!.id)
     .single()
 
-  type SearchRetry = { id: string; search_query: string; attempt_count: number; ocr_results: { images: { user_id: string } } }
+  type SearchRetry = { id: string; search_query: string; attempt_count: number; upload_batches: { user_id: string } }
   const search = data as unknown as SearchRetry | null
-  if (!search || search.ocr_results.images.user_id !== userId) return apiError('Not found', 404)
+  if (!search || search.upload_batches.user_id !== userId) return apiError('Not found', 404)
 
   await db.from('product_searches').update({ status: 'pending', attempt_count: search.attempt_count + 1 }).eq('id', params!.id)
 

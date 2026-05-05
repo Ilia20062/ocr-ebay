@@ -3,34 +3,32 @@ import { withAuth, apiError } from '@/lib/middleware'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { searchEbayProducts, selectBestMatch } from '@/lib/ebay/search'
 import { autoCreateListing } from '@/lib/ebay/auto-list'
+import { generateListingImageUrls } from '@/lib/ebay/image-urls'
 import { enqueueRetry } from '@/lib/retry'
 import type { Json } from '@/types/supabase'
 
 export const POST = withAuth(async (req, userId) => {
-  const body = await req.json() as { ocr_result_id: string; final_code: string }
-  if (!body.ocr_result_id || !body.final_code) return apiError('ocr_result_id and final_code required', 422)
+  const body = await req.json() as { batch_id: string; final_code: string }
+  if (!body.batch_id || !body.final_code) return apiError('batch_id and final_code required', 422)
 
   const db = getSupabaseAdminClient()
 
-  // Verify ownership
-  const { data: ocrResult } = await db
-    .from('ocr_results')
-    .select('id, images!inner(user_id)')
-    .eq('id', body.ocr_result_id)
+  const { data: batch } = await db
+    .from('upload_batches')
+    .select('id, user_id')
+    .eq('id', body.batch_id)
     .single()
 
-  const rawOcr = ocrResult as unknown as { id: string; images: { user_id: string } } | null
-  if (!rawOcr || rawOcr.images.user_id !== userId) return apiError('OCR result not found', 404)
+  if (!batch || batch.user_id !== userId) return apiError('Batch not found', 404)
 
   const { data: search, error } = await db.from('product_searches').insert({
-    ocr_result_id: body.ocr_result_id,
+    batch_id: body.batch_id,
     search_query: body.final_code,
     status: 'pending',
   }).select().single()
 
-  if (error) return apiError('Failed to create search', 500)
+  if (error || !search) return apiError('Failed to create search', 500)
 
-  // Run search
   try {
     const items = await searchEbayProducts(userId, body.final_code)
     const best = selectBestMatch(items, body.final_code)
@@ -42,10 +40,15 @@ export const POST = withAuth(async (req, userId) => {
       selected_item_id: best?.itemId ?? null,
     }).eq('id', search.id)
 
-    let listingResult;
-    // Auto-create eBay listing if a matching product was found
+    let listingResult
     if (best) {
-      listingResult = await autoCreateListing({ userId, searchId: search.id, bestMatch: best, imageUrls: [] })
+      const { data: imgs } = await db
+        .from('images')
+        .select('id, storage_path')
+        .eq('batch_id', body.batch_id)
+        .order('created_at', { ascending: true })
+      const imageUrls = await generateListingImageUrls(db, imgs ?? [])
+      listingResult = await autoCreateListing({ userId, searchId: search.id, bestMatch: best, imageUrls })
     }
 
     return NextResponse.json({ ...search, items, selected: best, listingResult }, { status: 201 })
@@ -65,8 +68,8 @@ export const GET = withAuth(async (req, userId) => {
 
   const { data, count } = await db
     .from('product_searches')
-    .select('*, ocr_results!inner(id, images!inner(user_id))', { count: 'exact' })
-    .eq('ocr_results.images.user_id', userId)
+    .select('*, upload_batches!inner(user_id)', { count: 'exact' })
+    .eq('upload_batches.user_id', userId)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
 
