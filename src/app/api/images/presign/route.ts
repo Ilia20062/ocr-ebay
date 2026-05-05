@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuth, apiError } from '@/lib/middleware'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
-import { presignSchema } from '@/lib/validators/upload'
+import { presignSchema, MAX_IMAGES_PER_BATCH } from '@/lib/validators/upload'
 
 export const POST = withAuth(async (req, userId) => {
   const body = await req.json()
@@ -20,6 +20,16 @@ export const POST = withAuth(async (req, userId) => {
     .single()
 
   if (!batch) return apiError('Batch not found', 404)
+
+  // Enforce per-batch image cap
+  const { count: existingCount } = await db
+    .from('images')
+    .select('id', { count: 'exact', head: true })
+    .eq('batch_id', batch_id)
+
+  if ((existingCount ?? 0) >= MAX_IMAGES_PER_BATCH) {
+    return apiError(`Group is at the ${MAX_IMAGES_PER_BATCH}-image limit`, 422, 'BATCH_FULL')
+  }
 
   // Create image record
   const safeName = filename.replace(/[^a-zA-Z0-9.\-_]/g, '_')
