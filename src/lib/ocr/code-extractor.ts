@@ -34,8 +34,9 @@ function scoreCandidate(code: string): number {
   const hasLetter = /[A-Z]/.test(code)
   const length = code.length
 
-  // Pure alphabetic short strings are likely words, not codes
-  if (!hasDigit && length < 6) return 0
+  // Pure-alphabetic strings are words ("WARRANTY", "GENUINE", "PATENT"), not codes.
+  // A real serial / part number on a label always contains at least one digit.
+  if (!hasDigit) return 0
 
   // Base: 0.4 — heuristic score intentionally stays below auto-approve threshold (0.90)
   // so OCR provider word-level confidence is required to push it over
