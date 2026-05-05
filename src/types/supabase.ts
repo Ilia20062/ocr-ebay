@@ -16,9 +16,9 @@ export interface Database {
         Relationships: []
       }
       upload_batches: {
-        Row: { id: string; user_id: string; status: string; total_images: number; processed: number; created_at: string; updated_at: string }
-        Insert: { id?: string; user_id: string; status?: string; total_images?: number; processed?: number; created_at?: string; updated_at?: string }
-        Update: { status?: string; total_images?: number; processed?: number; updated_at?: string }
+        Row: { id: string; user_id: string; status: string; total_images: number; processed: number; winning_ocr_result_id: string | null; final_code: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; user_id: string; status?: string; total_images?: number; processed?: number; winning_ocr_result_id?: string | null; final_code?: string | null; created_at?: string; updated_at?: string }
+        Update: { status?: string; total_images?: number; processed?: number; winning_ocr_result_id?: string | null; final_code?: string | null; updated_at?: string }
         Relationships: []
       }
       images: {
@@ -34,8 +34,8 @@ export interface Database {
         Relationships: []
       }
       product_searches: {
-        Row: { id: string; ocr_result_id: string; search_query: string; search_provider: string; status: string; result_count: number | null; results_raw: Json | null; selected_item_id: string | null; error_message: string | null; attempt_count: number; created_at: string; updated_at: string }
-        Insert: { id?: string; ocr_result_id: string; search_query: string; search_provider?: string; status?: string; result_count?: number | null; results_raw?: Json | null; selected_item_id?: string | null; error_message?: string | null; attempt_count?: number; created_at?: string; updated_at?: string }
+        Row: { id: string; batch_id: string; search_query: string; search_provider: string; status: string; result_count: number | null; results_raw: Json | null; selected_item_id: string | null; error_message: string | null; attempt_count: number; created_at: string; updated_at: string }
+        Insert: { id?: string; batch_id: string; search_query: string; search_provider?: string; status?: string; result_count?: number | null; results_raw?: Json | null; selected_item_id?: string | null; error_message?: string | null; attempt_count?: number; created_at?: string; updated_at?: string }
         Update: { status?: string; result_count?: number | null; results_raw?: Json | null; selected_item_id?: string | null; error_message?: string | null; attempt_count?: number; updated_at?: string }
         Relationships: []
       }

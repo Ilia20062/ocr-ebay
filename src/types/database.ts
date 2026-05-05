@@ -1,6 +1,13 @@
 export type Json = string | number | boolean | null | { [key: string]: Json } | Json[]
 
-export type BatchStatus = 'pending' | 'processing' | 'awaiting_review' | 'completed' | 'failed'
+export type BatchStatus =
+  | 'pending'
+  | 'processing'
+  | 'awaiting_review'
+  | 'approved'
+  | 'listed'
+  | 'failed'
+  | 'discarded'
 export type ImageStatus = 'uploaded' | 'ocr_processing' | 'ocr_done' | 'needs_review' | 'approved' | 'failed' | 'discarded'
 export type SearchStatus = 'pending' | 'success' | 'no_results' | 'failed'
 export type ListingStatus = 'draft' | 'submitting' | 'active' | 'failed' | 'ended'
@@ -33,6 +40,8 @@ export interface UploadBatch {
   status: BatchStatus
   total_images: number
   processed: number
+  winning_ocr_result_id: string | null
+  final_code: string | null
   created_at: string
   updated_at: string
 }
@@ -69,7 +78,7 @@ export interface OcrResult {
 
 export interface ProductSearch {
   id: string
-  ocr_result_id: string
+  batch_id: string
   search_query: string
   search_provider: string
   status: SearchStatus
