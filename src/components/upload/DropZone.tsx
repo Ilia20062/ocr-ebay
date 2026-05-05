@@ -28,9 +28,9 @@ export default function DropZone({ onFiles, disabled }: Props) {
       }
       valid.push(f)
     }
-    if (valid.length > 50) {
-      setError('Maximum 50 images per batch')
-      return valid.slice(0, 50)
+    if (valid.length > 24) {
+      setError('Maximum 24 images per group (eBay listing limit)')
+      return valid.slice(0, 24)
     }
     return valid
   }, [])
@@ -71,9 +71,9 @@ export default function DropZone({ onFiles, disabled }: Props) {
         />
         <span className="text-4xl mb-3">📷</span>
         <p className="text-sm font-medium text-gray-700">
-          Drop images here or <span className="text-blue-600">browse</span>
+          Drop all photos of <strong>one item</strong> here, or <span className="text-blue-600">browse</span>
         </p>
-        <p className="text-xs text-gray-400 mt-1">JPEG, PNG, WEBP, TIFF — up to 10MB each, max 50 images</p>
+        <p className="text-xs text-gray-400 mt-1">JPEG, PNG, WEBP, TIFF — up to 10MB each, max 24 images per item</p>
       </label>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
     </div>

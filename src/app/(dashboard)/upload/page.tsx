@@ -72,7 +72,8 @@ export default function UploadPage() {
     <div>
       <h2 className="text-2xl font-bold text-gray-900 mb-2">Upload Images</h2>
       <p className="text-sm text-gray-500 mb-6">
-        Upload images containing part number codes. OCR will automatically extract and process them.
+        Upload all photos of a single item. We&apos;ll find the serial number across the group and
+        create one listing with every photo attached.
       </p>
 
       <div className="max-w-2xl">
