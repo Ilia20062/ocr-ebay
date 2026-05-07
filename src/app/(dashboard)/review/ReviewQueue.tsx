@@ -62,16 +62,25 @@ export default function ReviewQueue({ initialGroups }: Props) {
 
   if (groups.length === 0) {
     return (
-      <div className="text-center py-16 text-gray-400">
-        <p className="text-4xl mb-3">✓</p>
-        <p className="font-medium text-gray-600">All caught up!</p>
-        <p className="text-sm mt-1">No groups need review right now.</p>
+      <div className="flex flex-col items-center justify-center py-24 text-center">
+        <div className="w-20 h-20 bg-green-50 rounded-full flex items-center justify-center mb-6 shadow-sm border border-green-100">
+          <svg className="w-10 h-10 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">All caught up!</h2>
+        <p className="text-gray-500 max-w-sm">There are no more items waiting for your review. Great job keeping the queue clear.</p>
       </div>
     )
   }
 
   return (
-    <div className="space-y-4 max-w-4xl">
+    <div className="max-w-5xl mx-auto space-y-8 pb-12">
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-gray-900">Review Queue</h1>
+        <p className="text-gray-500 mt-1">Review detected product codes and list them to eBay.</p>
+      </div>
+      
       {groups.map((g) => (
         <ReviewCard key={g.batchId} group={g} onSubmit={handleReview} />
       ))}
