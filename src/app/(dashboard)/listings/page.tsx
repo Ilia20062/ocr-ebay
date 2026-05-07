@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { getSupabaseServerClient } from '@/lib/supabase/server'
+import { PackageOpen } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
@@ -52,8 +53,8 @@ export default async function ListingsPage({ searchParams }: { searchParams?: Pr
       </div>
 
       {!listings || listings.length === 0 ? (
-        <div className="text-center py-16 text-gray-400">
-          <p className="text-4xl mb-3">📦</p>
+        <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+          <PackageOpen className="w-16 h-16 mb-4 text-gray-300" strokeWidth={1.5} />
           <p className="font-medium text-gray-600">No listings yet</p>
         </div>
       ) : (

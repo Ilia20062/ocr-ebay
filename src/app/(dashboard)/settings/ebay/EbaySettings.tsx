@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { ShoppingCart } from 'lucide-react'
 
 interface Connection {
   ebay_user_id: string | null
@@ -54,7 +55,9 @@ export default function EbaySettings({ connection }: Props) {
       <div className="max-w-md bg-white rounded-xl border border-gray-200 p-6 space-y-6">
         <div>
           <div className="flex items-center gap-3 mb-4">
-            <span className="text-2xl">🛒</span>
+            <div className="p-2.5 bg-yellow-100 rounded-xl text-yellow-600">
+              <ShoppingCart className="w-6 h-6" strokeWidth={2.5} />
+            </div>
             <div>
               <h3 className="font-semibold text-gray-900">Connect eBay Store</h3>
               <p className="text-sm text-gray-500">Link your eBay account to enable auto-listing</p>

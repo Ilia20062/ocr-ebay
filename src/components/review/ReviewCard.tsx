@@ -3,6 +3,11 @@
 import { useMemo, useState } from 'react'
 import Image from 'next/image'
 import type { GroupForReview, ReviewResponse } from '@/app/(dashboard)/review/ReviewQueue'
+import { 
+  CheckCircle2, Check, Trash2, X, Search, AlertTriangle, 
+  ExternalLink, ChevronDown, Loader2, Image as ImageIcon,
+  Upload, Sparkles, ShieldCheck, ShieldAlert, AlertCircle, ShoppingCart
+} from 'lucide-react'
 
 interface Props {
   group: GroupForReview
@@ -87,8 +92,8 @@ export default function ReviewCard({ group, onSubmit }: Props) {
     let bgColor = 'bg-emerald-50 border-emerald-200'
     let textColor = 'text-emerald-800'
     let icon = (
-      <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 mb-3">
-        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+      <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 mb-4 shadow-sm border border-emerald-200">
+        <Check className="w-6 h-6 md:w-7 md:h-7" strokeWidth={2.5} />
       </div>
     )
     let title = 'Review Successful'
@@ -97,8 +102,8 @@ export default function ReviewCard({ group, onSubmit }: Props) {
     if (isDiscarded) {
       bgColor = 'bg-amber-50 border-amber-200'; textColor = 'text-amber-800'; 
       icon = (
-        <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 mb-3">
-          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+        <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 mb-4 shadow-sm border border-amber-200">
+          <Trash2 className="w-6 h-6 md:w-7 md:h-7" strokeWidth={2.5} />
         </div>
       )
       title = 'Item Discarded'
@@ -109,8 +114,8 @@ export default function ReviewCard({ group, onSubmit }: Props) {
     } else if (listingFailed) {
       bgColor = 'bg-red-50 border-red-200'; textColor = 'text-red-800'; 
       icon = (
-         <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600 mb-3">
-          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+         <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center text-red-600 mb-4 shadow-sm border border-red-200">
+          <X className="w-6 h-6 md:w-7 md:h-7" strokeWidth={2.5} />
         </div>
       )
       title = 'Listing Failed'
@@ -118,8 +123,8 @@ export default function ReviewCard({ group, onSubmit }: Props) {
     } else if (noMatch) {
       bgColor = 'bg-amber-50 border-amber-200'; textColor = 'text-amber-800'; 
       icon = (
-         <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 mb-3">
-          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+         <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 mb-4 shadow-sm border border-amber-200">
+          <Search className="w-6 h-6 md:w-7 md:h-7" strokeWidth={2.5} />
         </div>
       )
       title = 'No Product Found'
@@ -127,8 +132,8 @@ export default function ReviewCard({ group, onSubmit }: Props) {
     } else if (searchError) {
       bgColor = 'bg-red-50 border-red-200'; textColor = 'text-red-800'; 
       icon = (
-         <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600 mb-3">
-          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+         <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center text-red-600 mb-4 shadow-sm border border-red-200">
+          <AlertTriangle className="w-6 h-6 md:w-7 md:h-7" strokeWidth={2.5} />
         </div>
       )
       title = 'Search Error'
@@ -136,54 +141,62 @@ export default function ReviewCard({ group, onSubmit }: Props) {
     }
 
     return (
-      <div className={`rounded-2xl border ${bgColor} overflow-hidden transition-all duration-500 ease-in-out`}>
+      <div className={`rounded-2xl border ${bgColor} overflow-hidden transition-all duration-500 ease-in-out shadow-sm`}>
         <div className="p-8 flex flex-col items-center text-center">
           {icon}
-          <h3 className={`font-bold text-lg mb-1 ${textColor}`}>{title}</h3>
-          <p className={`text-sm opacity-90 ${textColor}`}>{message}</p>
+          <h3 className={`font-bold text-xl mb-2 ${textColor}`}>{title}</h3>
+          <p className={`text-sm md:text-base opacity-90 ${textColor}`}>{message}</p>
           
           {response.listingResult?.listingUrl && (
             <a
               href={response.listingResult.listingUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-6 px-6 py-2.5 bg-white text-blue-600 border border-blue-200 rounded-full text-sm font-semibold hover:bg-blue-50 transition-colors shadow-sm flex items-center gap-2"
+              className="mt-6 px-6 py-3 bg-white text-blue-600 border border-blue-200 rounded-full text-sm font-bold hover:bg-blue-50 hover:border-blue-300 transition-all shadow-sm flex items-center gap-2 group"
             >
               View Listing on eBay
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+              <ExternalLink className="w-4 h-4 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
             </a>
           )}
           
           {response.searchDebug && (
-            <div className={`mt-6 text-sm text-left w-full max-w-md p-4 rounded-xl bg-white/50 border border-white/20 shadow-sm ${textColor}`}>
-              <div className="flex items-center gap-2 mb-2 font-medium opacity-80">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+            <div className={`mt-8 text-sm text-left w-full max-w-md p-5 rounded-xl bg-white/50 border border-white/40 shadow-sm ${textColor}`}>
+              <div className="flex items-center gap-2 mb-3 font-semibold opacity-80">
+                <Search className="w-4 h-4" />
                 eBay Search Results
               </div>
-              <p className="mb-1">Returned <strong>{response.searchDebug.itemCount ?? 0}</strong> items</p>
+              <p className="mb-1.5 flex items-center justify-between">
+                <span>Returned items</span>
+                <span className="font-bold bg-white/60 px-2 py-0.5 rounded-md">{response.searchDebug.itemCount ?? 0}</span>
+              </p>
               {response.searchDebug.bestMatchTitle && (
-                <p className="truncate" title={response.searchDebug.bestMatchTitle}>
-                  Best match: &quot;{response.searchDebug.bestMatchTitle}&quot;
-                </p>
+                <div className="mt-2 pt-2 border-t border-black/5">
+                  <p className="text-xs font-medium opacity-70 mb-1">Best Match</p>
+                  <p className="truncate font-medium bg-white/60 px-3 py-2 rounded-lg" title={response.searchDebug.bestMatchTitle}>
+                    {response.searchDebug.bestMatchTitle}
+                  </p>
+                </div>
               )}
             </div>
           )}
 
           {response.listingResult?.steps && response.listingResult.steps.length > 0 && (
-            <div className="mt-4 w-full max-w-md text-left space-y-1.5">
-              <p className="text-xs font-semibold uppercase tracking-wider opacity-70 mb-2">Listing Pipeline</p>
+            <div className="mt-6 w-full max-w-md text-left space-y-2">
+              <p className="text-xs font-bold uppercase tracking-wider opacity-70 mb-3 flex items-center gap-1.5">
+                <ShoppingCart className="w-3.5 h-3.5" /> Listing Pipeline
+              </p>
               {response.listingResult.steps.map((step, i) => (
-                <div key={i} className={`text-xs px-3 py-2 rounded-lg flex items-start gap-2 ${step.status === 'ok' ? 'bg-white/60' : 'bg-red-100/50'}`}>
-                  <span className={`mt-0.5 ${step.status === 'ok' ? 'text-emerald-500' : 'text-red-500'}`}>
+                <div key={i} className={`text-sm px-4 py-3 rounded-xl flex items-start gap-3 shadow-sm border ${step.status === 'ok' ? 'bg-white border-emerald-100' : 'bg-red-50 border-red-100'}`}>
+                  <span className={`mt-0.5 shrink-0 ${step.status === 'ok' ? 'text-emerald-500' : 'text-red-500'}`}>
                     {step.status === 'ok' ? (
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                      <Check className="w-4 h-4" strokeWidth={3} />
                     ) : (
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                      <X className="w-4 h-4" strokeWidth={3} />
                     )}
                   </span>
                   <div>
-                    <span className="font-semibold">{step.step}</span>
-                    <p className="opacity-80 mt-0.5 break-all">{step.detail}</p>
+                    <span className="font-bold">{step.step}</span>
+                    <p className="opacity-80 mt-1 break-words text-xs md:text-sm">{step.detail}</p>
                   </div>
                 </div>
               ))}
@@ -195,14 +208,14 @@ export default function ReviewCard({ group, onSubmit }: Props) {
           <div className="border-t border-black/5">
             <button
               onClick={() => setShowDebug(!showDebug)}
-              className="w-full px-6 py-3 text-center text-xs font-medium opacity-60 hover:opacity-100 transition-opacity flex items-center justify-center gap-2"
+              className="w-full px-6 py-4 text-center text-xs font-bold opacity-60 hover:opacity-100 hover:bg-black/5 transition-all flex items-center justify-center gap-2 uppercase tracking-wider"
             >
               {showDebug ? 'Hide' : 'Show'} Debug Log
-              <svg className={`w-3 h-3 transition-transform ${showDebug ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${showDebug ? 'rotate-180' : ''}`} />
             </button>
             {showDebug && (
               <div className="px-6 pb-6">
-                <pre className="text-[10px] leading-relaxed font-mono whitespace-pre-wrap break-all bg-black/5 rounded-xl p-4 max-h-64 overflow-y-auto">
+                <pre className="text-[10px] md:text-xs leading-relaxed font-mono whitespace-pre-wrap break-all bg-white rounded-xl p-5 max-h-80 overflow-y-auto shadow-inner border border-black/5">
                   {response.debugLog.join('\n')}
                 </pre>
               </div>
@@ -216,22 +229,25 @@ export default function ReviewCard({ group, onSubmit }: Props) {
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden transition-all hover:shadow-md">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+      <div className="px-5 py-4 md:px-6 md:py-5 border-b border-gray-100 flex flex-wrap gap-3 items-center justify-between bg-gray-50/50">
         <div className="flex items-center gap-3">
-          <h3 className="text-base font-semibold text-gray-900">Review Item</h3>
-          <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200">
+          <h3 className="text-base md:text-lg font-bold text-gray-900 flex items-center gap-2">
+            <ImageIcon className="w-5 h-5 text-gray-400" />
+            Review Item
+          </h3>
+          <span className="px-3 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-600 border border-gray-200 shadow-sm">
             {group.images.length} Photo{group.images.length !== 1 ? 's' : ''}
           </span>
         </div>
         {noCode ? (
-          <span className="px-3 py-1 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-100 flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span> No Code Detected
+          <span className="px-3 py-1.5 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-200 flex items-center gap-1.5 shadow-sm">
+            <AlertCircle className="w-4 h-4" /> No Code Detected
           </span>
         ) : (
-          <span className={`px-3 py-1 rounded-full text-xs font-medium flex items-center gap-1.5 ${
-            confidence >= 90 ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-amber-50 text-amber-700 border border-amber-100'
+          <span className={`px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 shadow-sm ${
+            confidence >= 90 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
           }`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${confidence >= 90 ? 'bg-green-500' : 'bg-amber-500'}`}></span>
+            {confidence >= 90 ? <ShieldCheck className="w-4 h-4" /> : <ShieldAlert className="w-4 h-4" />}
             {confidence}% Confidence
           </span>
         )}
@@ -239,19 +255,23 @@ export default function ReviewCard({ group, onSubmit }: Props) {
 
       <div className="flex flex-col md:flex-row">
         {/* Left: Images Area */}
-        <div className="md:w-1/2 p-6 border-b md:border-b-0 md:border-r border-gray-100 bg-gray-50/30">
+        <div className="md:w-[45%] lg:w-1/2 p-5 md:p-6 border-b md:border-b-0 md:border-r border-gray-100 bg-gray-50/30">
            {/* Active Image */}
-           <div className="relative aspect-square w-full mb-4 rounded-xl overflow-hidden bg-white border border-gray-200 shadow-inner">
+           <div className="relative aspect-square w-full mb-4 rounded-xl overflow-hidden bg-white border border-gray-200 shadow-inner group">
              {activeImage?.signed_url ? (
-               <Image
-                 src={activeImage.signed_url}
-                 alt={activeImage.original_filename ?? 'Product photo'}
-                 fill
-                 className="object-contain"
-                 unoptimized
-               />
+               <>
+                 <Image
+                   src={activeImage.signed_url}
+                   alt={activeImage.original_filename ?? 'Product photo'}
+                   fill
+                   className="object-contain transition-transform duration-500 group-hover:scale-105"
+                   unoptimized
+                 />
+                 <div className="absolute inset-0 ring-1 ring-inset ring-black/5 rounded-xl pointer-events-none" />
+               </>
              ) : (
-               <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400">
+               <div className="absolute inset-0 flex flex-col gap-2 items-center justify-center text-sm text-gray-400 bg-gray-50">
+                 <ImageIcon className="w-8 h-8 opacity-20" />
                  No preview available
                </div>
              )}
@@ -259,13 +279,15 @@ export default function ReviewCard({ group, onSubmit }: Props) {
 
            {/* Thumbnails */}
            {group.images.length > 1 && (
-             <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
+             <div className="flex gap-2.5 overflow-x-auto pb-3 pt-1 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
                {group.images.map(img => (
                  <button
                    key={img.id}
                    onClick={() => setActiveImageId(img.id)}
-                   className={`relative h-16 w-16 shrink-0 rounded-lg overflow-hidden border-2 transition-all ${
-                     activeImageId === img.id ? 'border-blue-500 shadow-sm' : 'border-transparent hover:border-gray-300 opacity-70 hover:opacity-100'
+                   className={`relative h-16 w-16 md:h-20 md:w-20 shrink-0 rounded-lg overflow-hidden border-2 transition-all ${
+                     activeImageId === img.id 
+                       ? 'border-blue-500 shadow-md ring-2 ring-blue-500/20' 
+                       : 'border-transparent hover:border-gray-300 opacity-70 hover:opacity-100 hover:shadow-sm'
                    }`}
                  >
                    {img.signed_url ? (
@@ -277,13 +299,13 @@ export default function ReviewCard({ group, onSubmit }: Props) {
                        unoptimized
                      />
                    ) : (
-                     <div className="absolute inset-0 bg-gray-200" />
+                     <div className="absolute inset-0 bg-gray-200 flex items-center justify-center">
+                       <ImageIcon className="w-4 h-4 text-gray-400" />
+                     </div>
                    )}
                    {img.id === winningImageId && (
-                     <div className="absolute bottom-0 right-0 bg-blue-500 p-0.5 rounded-tl">
-                       <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                       </svg>
+                     <div className="absolute bottom-0 right-0 bg-blue-500 p-1 rounded-tl-lg shadow-sm">
+                       <Sparkles className="w-3 h-3 md:w-3.5 md:h-3.5 text-white" />
                      </div>
                    )}
                  </button>
@@ -293,36 +315,43 @@ export default function ReviewCard({ group, onSubmit }: Props) {
         </div>
 
         {/* Right: Form Area */}
-        <div className="md:w-1/2 p-6 flex flex-col justify-between bg-white">
-          <div className="space-y-6">
+        <div className="md:w-[55%] lg:w-1/2 p-5 md:p-8 flex flex-col justify-between bg-white">
+          <div className="space-y-7">
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
+              <label className="block text-sm font-bold text-gray-700 mb-2.5 uppercase tracking-wide">
                 Product Code
               </label>
-              <input
-                type="text"
-                value={manualCode}
-                onChange={(e) => setManualCode(e.target.value.toUpperCase())}
-                placeholder="Enter product code..."
-                className="w-full px-4 py-3 text-lg font-mono tracking-wider border border-gray-300 rounded-xl bg-gray-50 focus:bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-              />
-              <p className="mt-2 text-xs text-gray-500">
-                Verify the detected code or manually override it before listing.
+              <div className="relative">
+                <input
+                  type="text"
+                  value={manualCode}
+                  onChange={(e) => setManualCode(e.target.value.toUpperCase())}
+                  placeholder="Enter product code..."
+                  className="w-full px-5 py-4 text-xl md:text-2xl font-mono tracking-wider border border-gray-300 rounded-xl bg-gray-50 focus:bg-white shadow-sm focus:outline-none focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-semibold text-gray-900"
+                />
+              </div>
+              <p className="mt-3 text-sm text-gray-500 flex items-start gap-1.5">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 opacity-60" />
+                <span>Verify the detected code or manually override it before listing.</span>
               </p>
             </div>
 
             {alternatives.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-gray-500 mb-2 uppercase tracking-wider">Alternative Suggestions</p>
-                <div className="flex flex-wrap gap-2">
+              <div className="pt-2 border-t border-gray-100">
+                <p className="text-xs font-bold text-gray-500 mb-3 uppercase tracking-wider flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5" /> Alternative Suggestions
+                </p>
+                <div className="flex flex-wrap gap-2.5">
                   {alternatives.map(a => (
                     <button
                       key={a.code}
                       onClick={() => setManualCode(a.code)}
-                      className="px-3 py-1.5 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg text-sm font-mono text-gray-700 transition-colors flex items-center gap-2 group"
+                      className="px-3.5 py-2 bg-gray-50 hover:bg-blue-50 hover:border-blue-200 border border-gray-200 rounded-lg text-sm font-mono font-medium text-gray-700 hover:text-blue-700 transition-all flex items-center gap-2 group shadow-sm"
                     >
                       {a.code}
-                      <span className="text-[10px] text-gray-400 group-hover:text-gray-500">{Math.round(a.confidence * 100)}%</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-gray-200 group-hover:bg-blue-100 text-gray-500 group-hover:text-blue-600 font-sans font-bold transition-colors">
+                        {Math.round(a.confidence * 100)}%
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -330,31 +359,39 @@ export default function ReviewCard({ group, onSubmit }: Props) {
             )}
           </div>
 
-          <div className="mt-8 space-y-3">
+          <div className="mt-10 space-y-3.5">
             <button
               onClick={() => handleAction('list')}
               disabled={loading || !manualCode.trim()}
-              className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl font-semibold shadow-sm hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-300 disabled:to-gray-400 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+              className="w-full py-4 px-5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl font-bold text-base shadow-md hover:shadow-lg hover:from-blue-700 hover:to-indigo-700 hover:-translate-y-0.5 disabled:transform-none disabled:shadow-none disabled:from-gray-200 disabled:to-gray-300 disabled:text-gray-400 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2.5"
             >
               {loading && loadingAction === 'list' ? (
                 <>
-                  <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
+                  <Loader2 className="animate-spin w-5 h-5" />
                   Processing Listing...
                 </>
               ) : (
-                'Confirm & List to eBay'
+                <>
+                  <Upload className="w-5 h-5" />
+                  Confirm & List to eBay
+                </>
               )}
             </button>
             
             <button
               onClick={() => handleAction('discard')}
               disabled={loading}
-              className="w-full py-2.5 px-4 bg-white text-red-600 border border-red-200 rounded-xl font-medium hover:bg-red-50 disabled:opacity-50 transition-colors"
+              className="w-full py-3.5 px-5 bg-white text-red-600 border border-red-200 rounded-xl font-bold hover:bg-red-50 hover:border-red-300 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
             >
-               {loading && loadingAction === 'discard' ? 'Discarding...' : 'Discard Item'}
+               {loading && loadingAction === 'discard' ? (
+                 <>
+                   <Loader2 className="animate-spin w-4 h-4" /> Discarding...
+                 </>
+               ) : (
+                 <>
+                   <Trash2 className="w-4 h-4" /> Discard Item
+                 </>
+               )}
             </button>
           </div>
         </div>
@@ -362,4 +399,5 @@ export default function ReviewCard({ group, onSubmit }: Props) {
     </div>
   )
 }
+
 

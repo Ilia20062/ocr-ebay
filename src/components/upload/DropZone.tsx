@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useState, DragEvent, ChangeEvent } from 'react'
+import { ImagePlus } from 'lucide-react'
 
 interface Props {
   onFiles: (files: File[]) => void
@@ -69,7 +70,7 @@ export default function DropZone({ onFiles, disabled }: Props) {
           onChange={onChange}
           disabled={disabled}
         />
-        <span className="text-4xl mb-3">📷</span>
+        <ImagePlus className="w-12 h-12 mb-4 text-blue-500 opacity-80" strokeWidth={1.5} />
         <p className="text-sm font-medium text-gray-700">
           Drop all photos of <strong>one item</strong> here, or <span className="text-blue-600">browse</span>
         </p>

@@ -1,5 +1,6 @@
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { getSupabaseServerClient } from '@/lib/supabase/server'
+import { FolderOpen } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
@@ -115,8 +116,8 @@ export default async function BatchesPage() {
       <h2 className="text-2xl font-bold text-gray-900 mb-6">Upload History</h2>
 
       {!batches || batches.length === 0 ? (
-        <div className="text-center py-16 text-gray-400">
-          <p className="text-4xl mb-3">📂</p>
+        <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+          <FolderOpen className="w-16 h-16 mb-4 text-gray-300" strokeWidth={1.5} />
           <p className="font-medium text-gray-600">No uploads yet</p>
         </div>
       ) : (

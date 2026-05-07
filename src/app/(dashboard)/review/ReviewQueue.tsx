@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import ReviewCard from '@/components/review/ReviewCard'
 import type { OcrCandidate } from '@/types/ocr'
+import { CheckCircle2 } from 'lucide-react'
 
 export interface GroupForReview {
   batchId: string
@@ -64,9 +65,7 @@ export default function ReviewQueue({ initialGroups }: Props) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-center">
         <div className="w-20 h-20 bg-green-50 rounded-full flex items-center justify-center mb-6 shadow-sm border border-green-100">
-          <svg className="w-10 h-10 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-          </svg>
+          <CheckCircle2 className="w-10 h-10 text-green-500" strokeWidth={2.5} />
         </div>
         <h2 className="text-2xl font-bold text-gray-900 mb-2">All caught up!</h2>
         <p className="text-gray-500 max-w-sm">There are no more items waiting for your review. Great job keeping the queue clear.</p>
@@ -87,3 +86,4 @@ export default function ReviewQueue({ initialGroups }: Props) {
     </div>
   )
 }
+
