@@ -5,7 +5,7 @@ import { TesseractPool, recognizeFromBuffer } from '@/lib/ocr/pool'
 import { resolveGroupCode } from '@/lib/ocr/group-resolver'
 import { enqueueRetry } from '@/lib/retry'
 import { clusterByTime } from '@/lib/grouping/timeCluster'
-import { pickLabelCandidate } from '@/lib/grouping/labelPicker'
+import { pickLabelCandidate, pickLabelCandidates } from '@/lib/grouping/labelPicker'
 import { withContext } from '@/lib/log'
 import type { Json } from '@/types/supabase'
 import type { OcrCandidate } from '@/types/ocr'
@@ -17,6 +17,21 @@ interface SessionImage {
   storage_path: string
   original_filename: string | null
   captured_at: string | null
+}
+
+interface ClusterImage {
+  id: string
+  filename: string
+  capturedAt: Date | null
+  storage_path: string
+}
+
+type OcrRow = {
+  id: string
+  image_id: string
+  extracted_code: string | null
+  confidence: number | null
+  all_candidates: OcrCandidate[]
 }
 
 export const POST = withAuth(async (_req, userId, params) => {
@@ -85,7 +100,7 @@ async function processSessionInBackground(
     // Stage A/B: time + label-anchor clustering.
     const tCluster = Date.now()
     const clusters = clusterByTime(
-      images.map((i) => ({
+      images.map<ClusterImage>((i) => ({
         id: i.id,
         filename: i.original_filename ?? '',
         capturedAt: i.captured_at ? new Date(i.captured_at) : null,
@@ -112,7 +127,6 @@ async function processSessionInBackground(
       .update({ status: 'processing', group_count: clusters.length })
       .eq('id', sessionId)
 
-    // Spin up the worker pool ONCE for the whole session.
     const tPool = Date.now()
     pool = new TesseractPool(Math.min(OCR_CONCURRENCY, images.length))
     try {
@@ -133,9 +147,9 @@ async function processSessionInBackground(
     let clusterIdx = 0
     let totalCodesFound = 0
     let totalNoCode = 0
+    let totalImagesOcrd = 0 // For visibility: how many images we actually OCR'd vs total uploaded
     for (const cluster of clusters) {
       const cIdx = clusterIdx++
-      const cLog = log // child context per cluster comes from extra fields below
       const tBatch = Date.now()
 
       const { data: batch, error: batchErr } = await db
@@ -152,7 +166,7 @@ async function processSessionInBackground(
         .single()
 
       if (batchErr || !batch) {
-        cLog.error('batch insert failed — skipping cluster', {
+        log.error('batch insert failed — skipping cluster', {
           cluster_idx: cIdx,
           cluster_size: cluster.length,
           err: batchErr,
@@ -165,26 +179,47 @@ async function processSessionInBackground(
         .update({ batch_id: batch.id })
         .in('id', cluster.map((c) => c.id))
       if (reparentErr) {
-        cLog.error('failed to reparent images onto batch', {
+        log.error('failed to reparent images onto batch', {
           cluster_idx: cIdx,
           batch_id: batch.id,
           err: reparentErr,
         })
-        // Continue anyway — some images may still be on the batch via direct id mapping.
       }
 
-      const ocrRows = await runOcrForCluster(
-        pool,
-        cluster.map((c) => ({
-          id: c.id,
-          storage_path: c.storage_path,
-          filename: c.filename,
-        })),
-        batch.id,
-        sessionId,
-        userId,
-      )
+      // ─── Two-phase OCR ────────────────────────────────────────────────────
+      // Phase 1: run OCR only on bare .jpg files. In the target workflow these
+      // are the close-up shots of the molded product code. The wide PNG product
+      // shots almost never carry readable code — OCRing them just wastes
+      // Tesseract cycles AND introduces watermark false positives ("90 DAYS").
+      //
+      // Phase 2 (fallback): if Phase 1 produced no code, OCR everything else.
+      // Catches clusters where the user shot only PNGs (or where the JPG was a
+      // dud). Costs us nothing on the happy path.
+      // ─────────────────────────────────────────────────────────────────────
+      const labelCandidates = pickLabelCandidates(cluster)
+      const phase1Images = labelCandidates.length > 0 ? labelCandidates : cluster
+      const phase1Ocr = await runOcrOnImages(pool!, phase1Images, batch.id, sessionId, userId)
+      totalImagesOcrd += phase1Images.length
 
+      const phase1HasCode = phase1Ocr.some((r) => r.extracted_code)
+      let ocrRows: OcrRow[] = phase1Ocr
+
+      if (!phase1HasCode && labelCandidates.length > 0 && labelCandidates.length < cluster.length) {
+        // Phase 2: OCR the remaining (non-label) images.
+        const remaining = cluster.filter((c) => !labelCandidates.find((l) => l.id === c.id))
+        log.info('phase 1 found no code — running phase 2 fallback', {
+          cluster_idx: cIdx,
+          batch_id: batch.id,
+          phase1_count: phase1Images.length,
+          phase2_count: remaining.length,
+        })
+        const phase2Ocr = await runOcrOnImages(pool!, remaining, batch.id, sessionId, userId)
+        ocrRows = [...phase1Ocr, ...phase2Ocr]
+        totalImagesOcrd += remaining.length
+      }
+
+      // Stage F: pick label candidate (informs the ✨ thumbnail badge). Use
+      // measured OCR confidence when we have it.
       const labelImg = pickLabelCandidate(
         cluster.map((c) => {
           const o = ocrRows.find((r) => r.image_id === c.id)
@@ -214,11 +249,12 @@ async function processSessionInBackground(
         })
         .eq('id', batch.id)
 
-      cLog.info('cluster done', {
+      log.info('cluster done', {
         cluster_idx: cIdx,
         cluster_size: cluster.length,
         batch_id: batch.id,
         ocr_rows: ocrRows.length,
+        ocr_skipped: cluster.length - ocrRows.length,
         winning_code: resolved.winningCode,
         had_consensus: resolved.hadConsensus,
         label_id: labelImg?.id ?? null,
@@ -231,6 +267,9 @@ async function processSessionInBackground(
       cluster_count: clusters.length,
       codes_found: totalCodesFound,
       no_code: totalNoCode,
+      images_total: images.length,
+      images_ocrd: totalImagesOcrd,
+      ocr_savings_pct: Math.round((1 - totalImagesOcrd / images.length) * 100),
       dur_ms: Date.now() - tStart,
     })
   } catch (err) {
@@ -251,19 +290,21 @@ async function processSessionInBackground(
   }
 }
 
-async function runOcrForCluster(
+/**
+ * OCR a set of images via the shared pool, write per-image ocr_results rows,
+ * update image status, return the inserted rows. Errors per-image are logged
+ * + written to images.error_message + enqueued for retry; the caller still
+ * receives a (possibly empty) array.
+ */
+async function runOcrOnImages(
   pool: TesseractPool,
-  images: Array<{ id: string; storage_path: string; filename: string }>,
+  images: ClusterImage[],
   batchId: string,
   sessionId: string,
   userId: string,
-): Promise<Array<{
-  id: string
-  image_id: string
-  extracted_code: string | null
-  confidence: number | null
-  all_candidates: OcrCandidate[]
-}>> {
+): Promise<OcrRow[]> {
+  if (images.length === 0) return []
+
   const log = withContext({
     scope: 'session.process.ocr',
     user_id: userId,
@@ -271,13 +312,7 @@ async function runOcrForCluster(
     batch_id: batchId,
   })
   const db = getSupabaseAdminClient()
-  const ocrRows: Array<{
-    id: string
-    image_id: string
-    extracted_code: string | null
-    confidence: number | null
-    all_candidates: OcrCandidate[]
-  }> = []
+  const ocrRows: OcrRow[] = []
   let processed = 0
 
   await pool.map(images, async (worker, image) => {
@@ -333,9 +368,7 @@ async function runOcrForCluster(
         bytes: buffer.length,
         text_len: ocrResult.extractedText.length,
         top_code: ocrResult.topCandidate?.text ?? null,
-        top_conf: ocrResult.topCandidate
-          ? Number(ocrResult.topCandidate.confidence.toFixed(2))
-          : null,
+        top_conf: ocrResult.topCandidate ? Number(ocrResult.topCandidate.confidence.toFixed(2)) : null,
         dur_ms: Date.now() - tImg,
       })
     } catch (err) {

@@ -30,3 +30,22 @@ export function pickLabelCandidate<T extends LabelCandidateImage>(cluster: T[]):
 
   return cluster.slice().sort((a, b) => (b.capturedAt?.getTime() ?? 0) - (a.capturedAt?.getTime() ?? 0))[0]
 }
+
+/**
+ * Two-phase-OCR helper: pick every image that LIKELY contains a printed code.
+ *
+ * In the target workflow, the user shoots wide product PNGs (white background,
+ * no readable code) followed by a bare-.jpg close-up of the molded code. So the
+ * .jpg files in a cluster are the high-probability label images.
+ *
+ * If a cluster has any bare .jpg, return all of them (in case the user took
+ * multiple close-ups). If not, return empty so the caller knows to OCR the
+ * whole cluster.
+ *
+ * Used by session/process to skip OCR'ing every PNG (which both wastes Tesseract
+ * cycles AND introduces watermark false positives like "90 DAYS").
+ */
+export function pickLabelCandidates<T extends LabelCandidateImage>(cluster: T[]): T[] {
+  if (cluster.length === 0) return []
+  return cluster.filter((i) => /\.jpe?g$/i.test(i.filename))
+}
