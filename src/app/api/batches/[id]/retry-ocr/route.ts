@@ -16,8 +16,27 @@ const OCR_CONCURRENCY = 4
 export const POST = withAuth(async (_req, userId, params) => {
   const batchId = params!.id
   const log = withContext({ scope: 'batch.retry-ocr', user_id: userId, batch_id: batchId })
-  const db = getSupabaseAdminClient()
   const tStart = Date.now()
+
+  // Top-level guard so any uncaught throw — Supabase outage, OOM during arrayBuffer,
+  // unexpected exception inside Tesseract.js — surfaces as a real error message
+  // to the client instead of an opaque "500".
+  try {
+    return await runRetryOcr(batchId, userId, log, tStart)
+  } catch (err) {
+    log.error('retry-ocr fatal', { err, dur_ms: Date.now() - tStart })
+    const msg = err instanceof Error ? err.message : String(err)
+    return apiError(`Retry failed: ${msg}`, 500)
+  }
+})
+
+async function runRetryOcr(
+  batchId: string,
+  userId: string,
+  log: ReturnType<typeof withContext>,
+  tStart: number,
+) {
+  const db = getSupabaseAdminClient()
 
   const { data: batch, error: batchErr } = await db
     .from('upload_batches')
@@ -45,7 +64,7 @@ export const POST = withAuth(async (_req, userId, params) => {
 
   if (imgErr) {
     log.error('failed to load images', { err: imgErr })
-    return apiError('Failed to read batch images', 500)
+    return apiError(`Failed to read batch images: ${imgErr.message}`, 500)
   }
   if (!images || images.length === 0) {
     log.warn('no images to OCR')
@@ -62,7 +81,7 @@ export const POST = withAuth(async (_req, userId, params) => {
     .eq('id', batchId)
   if (clearErr) {
     log.error('failed to clear winner', { err: clearErr })
-    return apiError('Failed to reset batch', 500)
+    return apiError(`Failed to reset batch: ${clearErr.message}`, 500)
   }
   const { error: deleteErr } = await db
     .from('ocr_results')
@@ -70,7 +89,8 @@ export const POST = withAuth(async (_req, userId, params) => {
     .in('image_id', images.map((i) => i.id))
   if (deleteErr) {
     log.error('failed to delete stale ocr_results', { err: deleteErr })
-    // Continue — duplicate insert will fail per-image but other images can succeed.
+    // Continue — per-image insert will fail (unique constraint) but other images
+    // can still produce useful results. Surface in final summary.
   }
 
   const ocrRows: Array<{
@@ -81,13 +101,15 @@ export const POST = withAuth(async (_req, userId, params) => {
     all_candidates: OcrCandidate[]
   }> = []
 
+  const failures: Array<{ image_id: string; reason: string }> = []
   const pool = new TesseractPool(Math.min(OCR_CONCURRENCY, images.length))
   try {
     try {
       await pool.init()
     } catch (err) {
       log.error('Tesseract pool init failed', { err })
-      return apiError('OCR worker init failed', 500)
+      const msg = err instanceof Error ? err.message : String(err)
+      return apiError(`OCR worker init failed: ${msg}`, 500)
     }
 
     await pool.map(images, async (worker, image) => {
@@ -120,7 +142,7 @@ export const POST = withAuth(async (_req, userId, params) => {
           .single()
 
         if (insertErr || !inserted) {
-          throw new Error(`insert failed: ${insertErr?.message ?? 'no row'}`)
+          throw new Error(`ocr_results insert failed: ${insertErr?.message ?? 'no row returned'}`)
         }
 
         ocrRows.push({
@@ -139,7 +161,13 @@ export const POST = withAuth(async (_req, userId, params) => {
           dur_ms: Date.now() - tImg,
         })
       } catch (err) {
-        log.error('retry ocr image failed', { image_id: image.id, err, dur_ms: Date.now() - tImg })
+        const reason = err instanceof Error ? err.message : String(err)
+        failures.push({ image_id: image.id, reason })
+        log.error('retry ocr image failed', {
+          image_id: image.id,
+          err,
+          dur_ms: Date.now() - tImg,
+        })
       }
     })
   } finally {
@@ -150,9 +178,26 @@ export const POST = withAuth(async (_req, userId, params) => {
     }
   }
 
+  // If every image failed, the retry is useless — surface that as an error so the
+  // user sees something actionable rather than a silent "still no code".
+  if (ocrRows.length === 0) {
+    log.error('retry produced no ocr rows', {
+      total: images.length,
+      failures: failures.length,
+      first_failure: failures[0]?.reason ?? null,
+      dur_ms: Date.now() - tStart,
+    })
+    return apiError(
+      `Retry failed for all ${images.length} image${images.length === 1 ? '' : 's'}: ${
+        failures[0]?.reason ?? 'unknown error'
+      }`,
+      500,
+    )
+  }
+
   const resolved = resolveGroupCode({ ocrResults: ocrRows })
 
-  await db
+  const { error: finalErr } = await db
     .from('upload_batches')
     .update({
       winning_ocr_result_id: resolved.winningOcrResultId,
@@ -161,10 +206,15 @@ export const POST = withAuth(async (_req, userId, params) => {
       total_images: images.length,
     })
     .eq('id', batchId)
+  if (finalErr) {
+    log.error('failed to write resolver result', { err: finalErr })
+    return apiError(`Failed to update batch: ${finalErr.message}`, 500)
+  }
 
   log.info('retry complete', {
     total: images.length,
     ocr_rows: ocrRows.length,
+    failures: failures.length,
     winning_code: resolved.winningCode,
     had_consensus: resolved.hadConsensus,
     dur_ms: Date.now() - tStart,
@@ -176,5 +226,6 @@ export const POST = withAuth(async (_req, userId, params) => {
     winning_ocr_result_id: resolved.winningOcrResultId,
     images_processed: ocrRows.length,
     images_total: images.length,
+    images_failed: failures.length,
   })
-})
+}
