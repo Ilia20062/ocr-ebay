@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { withAuth, apiError } from '@/lib/middleware'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
-import { TesseractPool, recognizeFromBuffer } from '@/lib/ocr/pool'
+import { TesseractPool, recognizeWithFallback } from '@/lib/ocr/pool'
 import { resolveGroupCode } from '@/lib/ocr/group-resolver'
 import { enqueueRetry } from '@/lib/retry'
 import { withContext } from '@/lib/log'
@@ -100,7 +100,7 @@ async function processGroupInBackground(
 
         const ab = await blob.arrayBuffer()
         const buffer = Buffer.from(ab)
-        const ocrResult = await recognizeFromBuffer(worker, buffer, blob.type || 'image/jpeg')
+        const ocrResult = await recognizeWithFallback(worker, buffer, blob.type || 'image/jpeg')
 
         const { data: inserted, error: insertErr } = await db
           .from('ocr_results')

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { withAuth, apiError } from '@/lib/middleware'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
-import { TesseractPool, recognizeFromBuffer } from '@/lib/ocr/pool'
+import { TesseractPool, recognizeWithFallback } from '@/lib/ocr/pool'
 import { resolveGroupCode } from '@/lib/ocr/group-resolver'
 import { withContext } from '@/lib/log'
 import type { Json } from '@/types/supabase'
@@ -15,6 +15,7 @@ type OcrRow = {
   id: string
   image_id: string
   extracted_code: string | null
+  extracted_text: string | null
   confidence: number | null
   all_candidates: OcrCandidate[]
 }
@@ -137,10 +138,14 @@ async function runRetryOcr(
     const phase1Rows = await runPhase(pool, phase1, batchId, log, failures)
     allOcrRows = phase1Rows
 
-    // Phase 2 only if phase 1 found nothing.
+    // Phase 2 if phase 1 produced no code (covers both "label unreadable" and
+    // "label was identified wrong" cases).
     const phase1HasCode = phase1Rows.some((r) => r.extracted_code)
     if (!phase1HasCode && phase2.length > 0) {
-      log.info('phase 1 no code — running phase 2 fallback', { phase2_count: phase2.length })
+      log.info('phase 1 produced no code — running phase 2 fallback', {
+        phase1_count: phase1.length,
+        phase2_count: phase2.length,
+      })
       // Wipe phase 2 stale rows now (we delayed until we're sure we'll OCR them).
       const { error: del2Err } = await db
         .from('ocr_results')
@@ -157,7 +162,7 @@ async function runRetryOcr(
       if (phase2.length > 0) {
         const { data: existingPhase2 } = await db
           .from('ocr_results')
-          .select('id, image_id, extracted_code, confidence, all_candidates')
+          .select('id, image_id, extracted_code, extracted_text, confidence, all_candidates')
           .in('image_id', phase2.map((i) => i.id))
         if (existingPhase2) {
           allOcrRows = [
@@ -166,6 +171,7 @@ async function runRetryOcr(
               id: r.id,
               image_id: r.image_id,
               extracted_code: r.extracted_code,
+              extracted_text: r.extracted_text,
               confidence: r.confidence,
               all_candidates: (r.all_candidates as unknown as OcrCandidate[]) ?? [],
             })),
@@ -213,6 +219,42 @@ async function runRetryOcr(
     return apiError(`Failed to update batch: ${finalErr.message}`, 500)
   }
 
+  // Build a diagnostic for the UI when no code was found, using the ACTUAL
+  // OCR text length (not just candidate count). The previous version conflated
+  // "no text at all" with "text but no part-number-shaped strings", which made
+  // the user see "no readable text" even when Tesseract clearly read words like
+  // WARRANTY / 90 DAYS / PartsOut.
+  let diagnostic: string | null = null
+  let textSample: string | null = null
+  if (!resolved.winningCode) {
+    const totalTextLen = allOcrRows.reduce((n, r) => n + (r.extracted_text?.length ?? 0), 0)
+    const totalCandidates = allOcrRows.reduce((n, r) => n + (r.all_candidates?.length ?? 0), 0)
+
+    // Pick the row with the most text for the snippet — that's the most useful
+    // thing to show the user (they can read it and find the code themselves).
+    const bestRow = allOcrRows
+      .slice()
+      .sort((a, b) => (b.extracted_text?.length ?? 0) - (a.extracted_text?.length ?? 0))[0]
+    if (bestRow?.extracted_text) {
+      textSample = bestRow.extracted_text.replace(/\s+/g, ' ').trim().slice(0, 280)
+    }
+
+    if (totalTextLen < 10) {
+      diagnostic =
+        'OCR returned no readable text on any image — try a clearer photo, better lighting, or type the code manually.'
+    } else if (totalCandidates > 0) {
+      const codes = allOcrRows
+        .flatMap((r) => r.all_candidates ?? [])
+        .map((c) => c.text)
+        .filter((c, i, arr) => arr.indexOf(c) === i)
+        .slice(0, 5)
+      diagnostic = `OCR found these strings but couldn't decide which is the code: ${codes.join(', ')}. Pick one or type it manually.`
+    } else {
+      diagnostic =
+        'OCR read text but no part-number-shaped string was found. The text it read is shown below — copy the code from there.'
+    }
+  }
+
   log.info('retry complete', {
     total: images.length,
     images_ocrd: phase1.length + (allOcrRows.length > phase1.length ? phase2.length : 0),
@@ -220,6 +262,7 @@ async function runRetryOcr(
     failures: failures.length,
     winning_code: resolved.winningCode,
     had_consensus: resolved.hadConsensus,
+    diagnostic,
     dur_ms: Date.now() - tStart,
   })
 
@@ -230,6 +273,8 @@ async function runRetryOcr(
     images_processed: allOcrRows.length,
     images_total: images.length,
     images_failed: failures.length,
+    diagnostic,
+    text_sample: textSample,
   })
 }
 
@@ -256,7 +301,7 @@ async function runPhase(
 
       const ab = await blob.arrayBuffer()
       const buffer = Buffer.from(ab)
-      const ocrResult = await recognizeFromBuffer(worker, buffer, blob.type || 'image/jpeg')
+      const ocrResult = await recognizeWithFallback(worker, buffer, blob.type || 'image/jpeg')
 
       const { data: inserted, error: insertErr } = await db
         .from('ocr_results')
@@ -270,7 +315,7 @@ async function runPhase(
           provider: ocrResult.provider,
           auto_approved: false,
         })
-        .select('id, image_id, extracted_code, confidence, all_candidates')
+        .select('id, image_id, extracted_code, extracted_text, confidence, all_candidates')
         .single()
 
       if (insertErr || !inserted) {
@@ -281,17 +326,34 @@ async function runPhase(
         id: inserted.id,
         image_id: inserted.image_id,
         extracted_code: inserted.extracted_code,
+        extracted_text: inserted.extracted_text,
         confidence: inserted.confidence,
         all_candidates: (inserted.all_candidates as unknown as OcrCandidate[]) ?? [],
       })
 
-      log.debug('retry ocr done', {
+      const textLen = ocrResult.extractedText.length
+      log.info('retry ocr done', {
         image_id: image.id,
         bytes: buffer.length,
-        text_len: ocrResult.extractedText.length,
+        text_len: textLen,
+        candidate_count: ocrResult.candidates.length,
         top_code: ocrResult.topCandidate?.text ?? null,
+        top_conf: ocrResult.topCandidate ? Number(ocrResult.topCandidate.confidence.toFixed(2)) : null,
         dur_ms: Date.now() - tImg,
       })
+      if (textLen === 0) {
+        log.warn('retry: Tesseract returned empty text', {
+          image_id: image.id,
+          bytes: buffer.length,
+          mime: blob.type || 'image/jpeg',
+        })
+      } else if (!ocrResult.topCandidate && textLen > 30) {
+        log.warn('retry: read text but no code extracted', {
+          image_id: image.id,
+          text_len: textLen,
+          text_sample: ocrResult.extractedText.slice(0, 120).replace(/\s+/g, ' '),
+        })
+      }
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
       failures.push({ image_id: image.id, reason })

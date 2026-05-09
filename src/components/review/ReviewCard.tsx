@@ -34,6 +34,8 @@ export default function ReviewCard({ group, onSubmit, onSplit, splitBusy }: Prop
   const [splitSelection, setSplitSelection] = useState<Set<string>>(new Set())
   const [retrying, setRetrying] = useState(false)
   const [retryError, setRetryError] = useState<string | null>(null)
+  const [retryDiagnostic, setRetryDiagnostic] = useState<string | null>(null)
+  const [retryTextSample, setRetryTextSample] = useState<string | null>(null)
 
   const winningOcr = useMemo(
     () => group.ocrResults.find((r) => r.id === group.winningOcrResultId) ?? null,
@@ -68,11 +70,25 @@ export default function ReviewCard({ group, onSubmit, onSplit, splitBusy }: Prop
   async function handleRetryOcr() {
     setRetrying(true)
     setRetryError(null)
+    setRetryDiagnostic(null)
+    setRetryTextSample(null)
     try {
       const res = await fetch(`/api/batches/${group.batchId}/retry-ocr`, { method: 'POST' })
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string
+        final_code?: string | null
+        diagnostic?: string | null
+        text_sample?: string | null
+        images_processed?: number
+        images_total?: number
+        images_failed?: number
+      }
       if (!res.ok) {
-        const j = await res.json().catch(() => ({}))
-        throw new Error(j.error ?? `Retry failed (${res.status})`)
+        throw new Error(body.error ?? `Retry failed (${res.status})`)
+      }
+      if (!body.final_code) {
+        if (body.diagnostic) setRetryDiagnostic(body.diagnostic)
+        if (body.text_sample) setRetryTextSample(body.text_sample)
       }
       // Pull fresh resolver state from the server.
       router.refresh()
@@ -445,6 +461,22 @@ export default function ReviewCard({ group, onSubmit, onSplit, splitBusy }: Prop
                   <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                   <span>OCR retry failed: {retryError}</span>
                 </p>
+              )}
+              {retryDiagnostic && (
+                <p className="mt-2 text-sm text-amber-700 flex items-start gap-1.5">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{retryDiagnostic}</span>
+                </p>
+              )}
+              {retryTextSample && (
+                <div className="mt-2 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-1">
+                    What OCR read
+                  </p>
+                  <pre className="text-xs text-gray-700 font-mono whitespace-pre-wrap break-words">
+                    {retryTextSample}
+                  </pre>
+                </div>
               )}
             </div>
 
