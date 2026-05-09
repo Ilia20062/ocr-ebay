@@ -1,12 +1,14 @@
 'use client'
 
 import { useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import type { GroupForReview, ReviewResponse } from '@/app/(dashboard)/review/ReviewQueue'
-import { 
-  CheckCircle2, Check, Trash2, X, Search, AlertTriangle, 
+import {
+  Check, Trash2, X, Search, AlertTriangle,
   ExternalLink, ChevronDown, Loader2, Image as ImageIcon,
-  Upload, Sparkles, ShieldCheck, ShieldAlert, AlertCircle, ShoppingCart
+  Upload, Sparkles, ShieldCheck, ShieldAlert, AlertCircle, ShoppingCart, Scissors,
+  RotateCw
 } from 'lucide-react'
 
 interface Props {
@@ -16,23 +18,69 @@ interface Props {
     action: 'approve' | 'override' | 'discard',
     override?: string,
   ) => Promise<ReviewResponse>
+  onSplit?: (imageIds: string[]) => Promise<void> | void
+  splitBusy?: boolean
 }
 
-export default function ReviewCard({ group, onSubmit }: Props) {
+export default function ReviewCard({ group, onSubmit, onSplit, splitBusy }: Props) {
+  const router = useRouter()
   const noCode = !group.finalCode
   const [manualCode, setManualCode] = useState(group.finalCode ?? '')
   const [loading, setLoading] = useState(false)
   const [loadingAction, setLoadingAction] = useState<'list' | 'discard' | null>(null)
   const [response, setResponse] = useState<ReviewResponse | null>(null)
   const [showDebug, setShowDebug] = useState(false)
+  const [splitMode, setSplitMode] = useState(false)
+  const [splitSelection, setSplitSelection] = useState<Set<string>>(new Set())
+  const [retrying, setRetrying] = useState(false)
+  const [retryError, setRetryError] = useState<string | null>(null)
 
   const winningOcr = useMemo(
     () => group.ocrResults.find((r) => r.id === group.winningOcrResultId) ?? null,
     [group.ocrResults, group.winningOcrResultId],
   )
-  
-  const winningImageId = winningOcr?.image_id ?? group.images[0]?.id ?? null
+
+  // Prefer the OCR-winning image; fall back to is_label_candidate hint; else first image.
+  const winningImageId =
+    winningOcr?.image_id ??
+    group.images.find((i) => i.is_label_candidate)?.id ??
+    group.images[0]?.id ??
+    null
   const [activeImageId, setActiveImageId] = useState<string | null>(winningImageId)
+
+  function toggleSplitSelection(imageId: string) {
+    setSplitSelection((prev) => {
+      const next = new Set(prev)
+      if (next.has(imageId)) next.delete(imageId)
+      else next.add(imageId)
+      return next
+    })
+  }
+
+  async function handleSplitConfirm() {
+    if (!onSplit) return
+    if (splitSelection.size === 0 || splitSelection.size === group.images.length) return
+    await onSplit([...splitSelection])
+    setSplitMode(false)
+    setSplitSelection(new Set())
+  }
+
+  async function handleRetryOcr() {
+    setRetrying(true)
+    setRetryError(null)
+    try {
+      const res = await fetch(`/api/batches/${group.batchId}/retry-ocr`, { method: 'POST' })
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        throw new Error(j.error ?? `Retry failed (${res.status})`)
+      }
+      // Pull fresh resolver state from the server.
+      router.refresh()
+    } catch (err) {
+      setRetryError(err instanceof Error ? err.message : String(err))
+    }
+    setRetrying(false)
+  }
 
   const confidence = winningOcr?.confidence ? Math.round(winningOcr.confidence * 100) : 0
 
@@ -239,18 +287,61 @@ export default function ReviewCard({ group, onSubmit }: Props) {
             {group.images.length} Photo{group.images.length !== 1 ? 's' : ''}
           </span>
         </div>
-        {noCode ? (
-          <span className="px-3 py-1.5 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-200 flex items-center gap-1.5 shadow-sm">
-            <AlertCircle className="w-4 h-4" /> No Code Detected
-          </span>
-        ) : (
-          <span className={`px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 shadow-sm ${
-            confidence >= 90 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
-          }`}>
-            {confidence >= 90 ? <ShieldCheck className="w-4 h-4" /> : <ShieldAlert className="w-4 h-4" />}
-            {confidence}% Confidence
-          </span>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          {noCode ? (
+            <>
+              <span className="px-3 py-1.5 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1.5 shadow-sm">
+                <AlertCircle className="w-4 h-4" /> No code detected — type the product code
+              </span>
+              <button
+                onClick={handleRetryOcr}
+                disabled={retrying}
+                className="px-3 py-1.5 rounded-full text-xs font-bold bg-white text-blue-700 border border-blue-200 hover:bg-blue-50 hover:border-blue-300 disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-1.5 shadow-sm transition-all"
+                title="Re-run OCR on every photo in this group"
+              >
+                {retrying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCw className="w-3.5 h-3.5" />}
+                {retrying ? 'Retrying…' : 'Retry OCR'}
+              </button>
+            </>
+          ) : (
+            <span className={`px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 shadow-sm ${
+              confidence >= 90 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
+            }`}>
+              {confidence >= 90 ? <ShieldCheck className="w-4 h-4" /> : <ShieldAlert className="w-4 h-4" />}
+              {confidence}% Confidence
+            </span>
+          )}
+          {onSplit && !splitMode && group.images.length > 1 && (
+            <button
+              onClick={() => { setSplitMode(true); setSplitSelection(new Set()) }}
+              className="px-2.5 py-1.5 rounded-full text-xs font-semibold bg-white text-gray-600 border border-gray-200 hover:bg-gray-50 hover:border-gray-300 flex items-center gap-1.5 shadow-sm"
+              title="Split this group — move selected photos to a new group"
+            >
+              <Scissors className="w-3.5 h-3.5" /> Split
+            </button>
+          )}
+          {splitMode && (
+            <>
+              <span className="px-2.5 py-1.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                Pick photos to move
+              </span>
+              <button
+                onClick={handleSplitConfirm}
+                disabled={splitSelection.size === 0 || splitSelection.size === group.images.length || splitBusy}
+                className="px-2.5 py-1.5 rounded-full text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-200 disabled:text-gray-400 flex items-center gap-1.5 shadow-sm"
+              >
+                {splitBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Scissors className="w-3.5 h-3.5" />}
+                Move {splitSelection.size}
+              </button>
+              <button
+                onClick={() => { setSplitMode(false); setSplitSelection(new Set()) }}
+                className="px-2 py-1.5 rounded-full text-xs font-semibold text-gray-500 hover:bg-gray-100"
+              >
+                Cancel
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-col md:flex-row">
@@ -280,36 +371,51 @@ export default function ReviewCard({ group, onSubmit }: Props) {
            {/* Thumbnails */}
            {group.images.length > 1 && (
              <div className="flex gap-2.5 overflow-x-auto pb-3 pt-1 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
-               {group.images.map(img => (
-                 <button
-                   key={img.id}
-                   onClick={() => setActiveImageId(img.id)}
-                   className={`relative h-16 w-16 md:h-20 md:w-20 shrink-0 rounded-lg overflow-hidden border-2 transition-all ${
-                     activeImageId === img.id 
-                       ? 'border-blue-500 shadow-md ring-2 ring-blue-500/20' 
-                       : 'border-transparent hover:border-gray-300 opacity-70 hover:opacity-100 hover:shadow-sm'
-                   }`}
-                 >
-                   {img.signed_url ? (
-                     <Image
-                       src={img.signed_url}
-                       alt="thumbnail"
-                       fill
-                       className="object-cover"
-                       unoptimized
-                     />
-                   ) : (
-                     <div className="absolute inset-0 bg-gray-200 flex items-center justify-center">
-                       <ImageIcon className="w-4 h-4 text-gray-400" />
-                     </div>
-                   )}
-                   {img.id === winningImageId && (
-                     <div className="absolute bottom-0 right-0 bg-blue-500 p-1 rounded-tl-lg shadow-sm">
-                       <Sparkles className="w-3 h-3 md:w-3.5 md:h-3.5 text-white" />
-                     </div>
-                   )}
-                 </button>
-               ))}
+               {group.images.map(img => {
+                 const selected = splitSelection.has(img.id)
+                 const onClickHandler = splitMode
+                   ? () => toggleSplitSelection(img.id)
+                   : () => setActiveImageId(img.id)
+                 return (
+                   <button
+                     key={img.id}
+                     onClick={onClickHandler}
+                     className={`relative h-16 w-16 md:h-20 md:w-20 shrink-0 rounded-lg overflow-hidden border-2 transition-all ${
+                       splitMode && selected
+                         ? 'border-blue-500 ring-2 ring-blue-500/40 shadow-md'
+                         : !splitMode && activeImageId === img.id
+                         ? 'border-blue-500 shadow-md ring-2 ring-blue-500/20'
+                         : 'border-transparent hover:border-gray-300 opacity-80 hover:opacity-100 hover:shadow-sm'
+                     }`}
+                   >
+                     {img.signed_url ? (
+                       <Image
+                         src={img.signed_url}
+                         alt="thumbnail"
+                         fill
+                         className="object-cover"
+                         unoptimized
+                       />
+                     ) : (
+                       <div className="absolute inset-0 bg-gray-200 flex items-center justify-center">
+                         <ImageIcon className="w-4 h-4 text-gray-400" />
+                       </div>
+                     )}
+                     {(img.id === winningImageId || img.is_label_candidate) && !splitMode && (
+                       <div className="absolute bottom-0 right-0 bg-blue-500 p-1 rounded-tl-lg shadow-sm">
+                         <Sparkles className="w-3 h-3 md:w-3.5 md:h-3.5 text-white" />
+                       </div>
+                     )}
+                     {splitMode && (
+                       <div className={`absolute top-1 left-1 w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                         selected ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white/90 border-gray-300'
+                       }`}>
+                         {selected && <Check className="w-3 h-3" strokeWidth={3} />}
+                       </div>
+                     )}
+                   </button>
+                 )
+               })}
              </div>
            )}
         </div>
@@ -334,6 +440,12 @@ export default function ReviewCard({ group, onSubmit }: Props) {
                 <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 opacity-60" />
                 <span>Verify the detected code or manually override it before listing.</span>
               </p>
+              {retryError && (
+                <p className="mt-2 text-sm text-red-600 flex items-start gap-1.5">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>OCR retry failed: {retryError}</span>
+                </p>
+              )}
             </div>
 
             {alternatives.length > 0 && (

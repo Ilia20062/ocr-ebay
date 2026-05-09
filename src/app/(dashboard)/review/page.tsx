@@ -7,31 +7,45 @@ export const dynamic = 'force-dynamic'
 
 const SIGNED_TTL = 3600
 
-export default async function ReviewPage() {
+export default async function ReviewPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ session?: string }>
+}) {
+  const { session: sessionId } = await searchParams
   const supabase = await getSupabaseServerClient()
   const { data: { user } } = await supabase.auth.getUser()
 
   const db = getSupabaseAdminClient()
-  const { data: batches } = await db
+  let query = db
     .from('upload_batches')
-    .select('id, status, final_code, winning_ocr_result_id, total_images, created_at')
+    .select('id, status, final_code, winning_ocr_result_id, total_images, upload_session_id, auto_grouped, created_at')
     .eq('user_id', user!.id)
     .eq('status', 'awaiting_review')
     .order('created_at', { ascending: true })
-    .limit(50)
+    .limit(100)
+
+  if (sessionId) query = query.eq('upload_session_id', sessionId)
+
+  const { data: batches } = await query
 
   const groups: GroupForReview[] = []
   for (const b of batches ?? []) {
     const { data: imgs } = await db
       .from('images')
-      .select('id, storage_path, original_filename')
+      .select('id, storage_path, original_filename, is_label_candidate, captured_at')
       .eq('batch_id', b.id)
-      .order('created_at', { ascending: true })
+      .order('captured_at', { ascending: true, nullsFirst: false })
 
     const signedImages = await Promise.all(
       (imgs ?? []).map(async (img) => {
         const { data } = await db.storage.from('images').createSignedUrl(img.storage_path, SIGNED_TTL)
-        return { id: img.id, signed_url: data?.signedUrl ?? null, original_filename: img.original_filename }
+        return {
+          id: img.id,
+          signed_url: data?.signedUrl ?? null,
+          original_filename: img.original_filename,
+          is_label_candidate: img.is_label_candidate ?? false,
+        }
       }),
     )
 
@@ -42,6 +56,8 @@ export default async function ReviewPage() {
 
     groups.push({
       batchId: b.id,
+      sessionId: b.upload_session_id,
+      autoGrouped: b.auto_grouped ?? false,
       finalCode: b.final_code,
       winningOcrResultId: b.winning_ocr_result_id,
       totalImages: b.total_images,
@@ -56,17 +72,33 @@ export default async function ReviewPage() {
     })
   }
 
+  // Header copy varies depending on whether we're filtered to a session.
+  let sessionLotLabel: string | null = null
+  if (sessionId) {
+    const { data: session } = await db
+      .from('upload_sessions')
+      .select('lot_label')
+      .eq('id', sessionId)
+      .eq('user_id', user!.id)
+      .single()
+    sessionLotLabel = session?.lot_label ?? null
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">Review Queue</h2>
+          <h2 className="text-2xl font-bold text-gray-900">
+            {sessionId ? 'Review Job Lot' : 'Review Queue'}
+            {sessionLotLabel ? <span className="ml-2 text-gray-400 font-mono">#{sessionLotLabel}</span> : null}
+          </h2>
           <p className="text-sm text-gray-500 mt-0.5">
             {groups.length} group{groups.length !== 1 ? 's' : ''} waiting for review
+            {sessionId ? ' — confirm or fix grouping below' : ''}
           </p>
         </div>
       </div>
-      <ReviewQueue initialGroups={groups} />
+      <ReviewQueue initialGroups={groups} sessionId={sessionId ?? null} />
     </div>
   )
 }

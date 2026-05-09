@@ -3,68 +3,76 @@ import { withAuth, apiError } from '@/lib/middleware'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { TesseractPool, recognizeFromBuffer } from '@/lib/ocr/pool'
 import { resolveGroupCode } from '@/lib/ocr/group-resolver'
-import { enqueueRetry } from '@/lib/retry'
 import { withContext } from '@/lib/log'
 import type { Json } from '@/types/supabase'
 import type { OcrCandidate } from '@/types/ocr'
 
 const OCR_CONCURRENCY = 4
 
+/**
+ * Re-run OCR on every image in a batch, replacing the existing ocr_results rows
+ * and recomputing the winning code.
+ */
 export const POST = withAuth(async (_req, userId, params) => {
   const batchId = params!.id
-  const log = withContext({ scope: 'batch.process', user_id: userId, batch_id: batchId })
+  const log = withContext({ scope: 'batch.retry-ocr', user_id: userId, batch_id: batchId })
   const db = getSupabaseAdminClient()
+  const tStart = Date.now()
 
   const { data: batch, error: batchErr } = await db
     .from('upload_batches')
-    .select('*')
+    .select('id, user_id, status')
     .eq('id', batchId)
-    .eq('user_id', userId)
     .single()
 
   if (batchErr || !batch) {
     log.warn('batch not found', { err: batchErr })
     return apiError('Batch not found', 404)
   }
-  if (batch.status === 'processing') {
-    log.warn('batch already processing')
-    return apiError('Batch already processing', 409)
+  if (batch.user_id !== userId) {
+    log.warn('unauthorized retry attempt', { batch_owner: batch.user_id })
+    return apiError('Unauthorized', 403)
   }
-
-  await db.from('upload_batches').update({ status: 'processing' }).eq('id', batchId)
+  if (batch.status !== 'awaiting_review') {
+    log.warn('retry on unexpected status', { current_status: batch.status })
+    return apiError('Batch must be in awaiting_review state', 409)
+  }
 
   const { data: images, error: imgErr } = await db
     .from('images')
     .select('id, storage_path')
     .eq('batch_id', batchId)
-    .eq('status', 'uploaded')
 
   if (imgErr) {
-    log.error('failed to load batch images', { err: imgErr })
+    log.error('failed to load images', { err: imgErr })
     return apiError('Failed to read batch images', 500)
   }
-
   if (!images || images.length === 0) {
-    log.warn('process called on empty batch')
-    await db.from('upload_batches').update({ status: 'failed' }).eq('id', batchId)
-    return apiError('No images to process', 422)
+    log.warn('no images to OCR')
+    return apiError('No images to OCR', 422)
   }
 
-  await db.from('upload_batches').update({ total_images: images.length }).eq('id', batchId)
+  log.info('retry start', { total: images.length })
 
-  log.info('starting background ocr', { total: images.length })
-  void processGroupInBackground(images, batchId, userId, db)
+  // Wipe stale OCR rows + clear the winner pointer so a new resolver pass can
+  // populate them. Status stays awaiting_review so the card remains visible.
+  const { error: clearErr } = await db
+    .from('upload_batches')
+    .update({ winning_ocr_result_id: null, final_code: null })
+    .eq('id', batchId)
+  if (clearErr) {
+    log.error('failed to clear winner', { err: clearErr })
+    return apiError('Failed to reset batch', 500)
+  }
+  const { error: deleteErr } = await db
+    .from('ocr_results')
+    .delete()
+    .in('image_id', images.map((i) => i.id))
+  if (deleteErr) {
+    log.error('failed to delete stale ocr_results', { err: deleteErr })
+    // Continue — duplicate insert will fail per-image but other images can succeed.
+  }
 
-  return NextResponse.json({ message: 'Processing started', total: images.length })
-})
-
-async function processGroupInBackground(
-  images: Array<{ id: string; storage_path: string }>,
-  batchId: string,
-  userId: string,
-  db: ReturnType<typeof getSupabaseAdminClient>,
-) {
-  const log = withContext({ scope: 'batch.process', user_id: userId, batch_id: batchId })
   const ocrRows: Array<{
     id: string
     image_id: string
@@ -72,8 +80,6 @@ async function processGroupInBackground(
     confidence: number | null
     all_candidates: OcrCandidate[]
   }> = []
-  let processed = 0
-  const tStart = Date.now()
 
   const pool = new TesseractPool(Math.min(OCR_CONCURRENCY, images.length))
   try {
@@ -81,19 +87,15 @@ async function processGroupInBackground(
       await pool.init()
     } catch (err) {
       log.error('Tesseract pool init failed', { err })
-      await db
-        .from('upload_batches')
-        .update({ status: 'failed' })
-        .eq('id', batchId)
-      return
+      return apiError('OCR worker init failed', 500)
     }
 
     await pool.map(images, async (worker, image) => {
       const tImg = Date.now()
       try {
-        await db.from('images').update({ status: 'ocr_processing' }).eq('id', image.id)
-
-        const { data: blob, error: dlError } = await db.storage.from('images').download(image.storage_path)
+        const { data: blob, error: dlError } = await db.storage
+          .from('images')
+          .download(image.storage_path)
         if (dlError || !blob) {
           throw new Error(`download failed: ${dlError?.message ?? 'no blob'}`)
         }
@@ -118,7 +120,7 @@ async function processGroupInBackground(
           .single()
 
         if (insertErr || !inserted) {
-          throw new Error(`ocr_results insert failed: ${insertErr?.message ?? 'no row'}`)
+          throw new Error(`insert failed: ${insertErr?.message ?? 'no row'}`)
         }
 
         ocrRows.push({
@@ -129,9 +131,7 @@ async function processGroupInBackground(
           all_candidates: (inserted.all_candidates as unknown as OcrCandidate[]) ?? [],
         })
 
-        await db.from('images').update({ status: 'ocr_done' }).eq('id', image.id)
-
-        log.debug('image ocr done', {
+        log.debug('retry ocr done', {
           image_id: image.id,
           bytes: buffer.length,
           text_len: ocrResult.extractedText.length,
@@ -139,17 +139,7 @@ async function processGroupInBackground(
           dur_ms: Date.now() - tImg,
         })
       } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err)
-        log.error('image ocr failed', { image_id: image.id, err, dur_ms: Date.now() - tImg })
-        await db.from('images').update({ status: 'failed', error_message: errMsg }).eq('id', image.id)
-        try {
-          await enqueueRetry('image', image.id, errMsg)
-        } catch (e) {
-          log.warn('enqueueRetry failed', { image_id: image.id, err: e })
-        }
-      } finally {
-        processed++
-        await db.from('upload_batches').update({ processed }).eq('id', batchId)
+        log.error('retry ocr image failed', { image_id: image.id, err, dur_ms: Date.now() - tImg })
       }
     })
   } finally {
@@ -165,18 +155,26 @@ async function processGroupInBackground(
   await db
     .from('upload_batches')
     .update({
-      status: 'awaiting_review',
       winning_ocr_result_id: resolved.winningOcrResultId,
       final_code: resolved.winningCode,
-      processed,
+      processed: images.length,
+      total_images: images.length,
     })
     .eq('id', batchId)
 
-  log.info('batch awaiting review', {
+  log.info('retry complete', {
     total: images.length,
     ocr_rows: ocrRows.length,
     winning_code: resolved.winningCode,
     had_consensus: resolved.hadConsensus,
     dur_ms: Date.now() - tStart,
   })
-}
+
+  return NextResponse.json({
+    success: true,
+    final_code: resolved.winningCode,
+    winning_ocr_result_id: resolved.winningOcrResultId,
+    images_processed: ocrRows.length,
+    images_total: images.length,
+  })
+})

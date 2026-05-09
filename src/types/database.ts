@@ -34,9 +34,31 @@ export interface EbayConnection {
   updated_at: string
 }
 
+export type UploadSessionStatus =
+  | 'uploading'
+  | 'grouping'
+  | 'processing'
+  | 'review_ready'
+  | 'done'
+  | 'failed'
+
+export interface UploadSession {
+  id: string
+  user_id: string
+  status: UploadSessionStatus
+  total_images: number
+  group_count: number
+  lot_label: string | null
+  error_message: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface UploadBatch {
   id: string
   user_id: string
+  upload_session_id: string | null
+  auto_grouped: boolean
   status: BatchStatus
   total_images: number
   processed: number
@@ -48,8 +70,11 @@ export interface UploadBatch {
 
 export interface Image {
   id: string
-  batch_id: string
+  batch_id: string | null
   user_id: string
+  upload_session_id: string | null
+  captured_at: string | null
+  is_label_candidate: boolean
   storage_path: string
   original_filename: string | null
   file_size_bytes: number | null

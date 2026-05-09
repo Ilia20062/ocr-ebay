@@ -6,12 +6,14 @@ import { ImagePlus } from 'lucide-react'
 interface Props {
   onFiles: (files: File[]) => void
   disabled?: boolean
+  maxFiles?: number
 }
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/tiff']
 const MAX_SIZE_MB = 10
+const DEFAULT_MAX_FILES = 300
 
-export default function DropZone({ onFiles, disabled }: Props) {
+export default function DropZone({ onFiles, disabled, maxFiles = DEFAULT_MAX_FILES }: Props) {
   const [dragging, setDragging] = useState(false)
   const [error, setError] = useState('')
 
@@ -29,12 +31,12 @@ export default function DropZone({ onFiles, disabled }: Props) {
       }
       valid.push(f)
     }
-    if (valid.length > 24) {
-      setError('Maximum 24 images per group (eBay listing limit)')
-      return valid.slice(0, 24)
+    if (valid.length > maxFiles) {
+      setError(`Maximum ${maxFiles} images per upload`)
+      return valid.slice(0, maxFiles)
     }
     return valid
-  }, [])
+  }, [maxFiles])
 
   function onDrop(e: DragEvent) {
     e.preventDefault()
@@ -72,9 +74,11 @@ export default function DropZone({ onFiles, disabled }: Props) {
         />
         <ImagePlus className="w-12 h-12 mb-4 text-blue-500 opacity-80" strokeWidth={1.5} />
         <p className="text-sm font-medium text-gray-700">
-          Drop all photos of <strong>one item</strong> here, or <span className="text-blue-600">browse</span>
+          Drop <strong>every photo from your job lot</strong> here, or <span className="text-blue-600">browse</span>
         </p>
-        <p className="text-xs text-gray-400 mt-1">JPEG, PNG, WEBP, TIFF — up to 10MB each, max 24 images per item</p>
+        <p className="text-xs text-gray-400 mt-1">
+          JPEG, PNG, WEBP, TIFF — up to 10MB each, max {maxFiles} images per upload
+        </p>
       </label>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
     </div>

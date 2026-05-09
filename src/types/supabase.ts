@@ -15,16 +15,22 @@ export interface Database {
         Update: { access_token?: string; refresh_token?: string; token_expires_at?: string; ebay_user_id?: string | null; marketplace_id?: string; updated_at?: string }
         Relationships: []
       }
+      upload_sessions: {
+        Row: { id: string; user_id: string; status: string; total_images: number; group_count: number; lot_label: string | null; error_message: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; user_id: string; status?: string; total_images?: number; group_count?: number; lot_label?: string | null; error_message?: string | null; created_at?: string; updated_at?: string }
+        Update: { status?: string; total_images?: number; group_count?: number; lot_label?: string | null; error_message?: string | null; updated_at?: string }
+        Relationships: []
+      }
       upload_batches: {
-        Row: { id: string; user_id: string; status: string; total_images: number; processed: number; winning_ocr_result_id: string | null; final_code: string | null; created_at: string; updated_at: string }
-        Insert: { id?: string; user_id: string; status?: string; total_images?: number; processed?: number; winning_ocr_result_id?: string | null; final_code?: string | null; created_at?: string; updated_at?: string }
-        Update: { status?: string; total_images?: number; processed?: number; winning_ocr_result_id?: string | null; final_code?: string | null; updated_at?: string }
+        Row: { id: string; user_id: string; upload_session_id: string | null; auto_grouped: boolean; status: string; total_images: number; processed: number; winning_ocr_result_id: string | null; final_code: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; user_id: string; upload_session_id?: string | null; auto_grouped?: boolean; status?: string; total_images?: number; processed?: number; winning_ocr_result_id?: string | null; final_code?: string | null; created_at?: string; updated_at?: string }
+        Update: { status?: string; upload_session_id?: string | null; auto_grouped?: boolean; total_images?: number; processed?: number; winning_ocr_result_id?: string | null; final_code?: string | null; updated_at?: string }
         Relationships: []
       }
       images: {
-        Row: { id: string; batch_id: string; user_id: string; storage_path: string; original_filename: string | null; file_size_bytes: number | null; mime_type: string | null; status: string; error_message: string | null; created_at: string; updated_at: string }
-        Insert: { id?: string; batch_id: string; user_id: string; storage_path: string; original_filename?: string | null; file_size_bytes?: number | null; mime_type?: string | null; status?: string; error_message?: string | null; created_at?: string; updated_at?: string }
-        Update: { status?: string; error_message?: string | null; updated_at?: string }
+        Row: { id: string; batch_id: string | null; user_id: string; upload_session_id: string | null; captured_at: string | null; is_label_candidate: boolean; storage_path: string; original_filename: string | null; file_size_bytes: number | null; mime_type: string | null; status: string; error_message: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; batch_id?: string | null; user_id: string; upload_session_id?: string | null; captured_at?: string | null; is_label_candidate?: boolean; storage_path: string; original_filename?: string | null; file_size_bytes?: number | null; mime_type?: string | null; status?: string; error_message?: string | null; created_at?: string; updated_at?: string }
+        Update: { batch_id?: string | null; upload_session_id?: string | null; captured_at?: string | null; is_label_candidate?: boolean; status?: string; error_message?: string | null; updated_at?: string }
         Relationships: []
       }
       ocr_results: {

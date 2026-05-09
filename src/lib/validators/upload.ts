@@ -1,12 +1,35 @@
 import { z } from 'zod'
 
 export const MAX_IMAGES_PER_BATCH = 24
+export const MAX_IMAGES_PER_SESSION = 300
 
 export const presignSchema = z.object({
   batch_id: z.string().uuid(),
   filename: z.string().min(1).max(255),
   mime_type: z.enum(['image/jpeg', 'image/png', 'image/webp', 'image/tiff']),
   file_size_bytes: z.number().int().min(1).max(10 * 1024 * 1024),
+})
+
+export const createSessionSchema = z.object({
+  lot_label: z.string().max(100).optional(),
+})
+
+export const sessionPresignSchema = z.object({
+  filename: z.string().min(1).max(255),
+  mime_type: z.enum(['image/jpeg', 'image/png', 'image/webp', 'image/tiff']),
+  file_size_bytes: z.number().int().min(1).max(10 * 1024 * 1024),
+})
+
+export const sessionConfirmSchema = z.object({
+  image_id: z.string().uuid(),
+})
+
+export const mergeBatchesSchema = z.object({
+  batch_ids: z.array(z.string().uuid()).min(2),
+})
+
+export const splitBatchSchema = z.object({
+  image_ids: z.array(z.string().uuid()).min(1),
 })
 
 export const confirmSchema = z.object({
