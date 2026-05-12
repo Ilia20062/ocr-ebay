@@ -1,9 +1,12 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
+import { revalidatePath } from 'next/cache'
 import { withAuth, apiError } from '@/lib/middleware'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { createListingSchema } from '@/lib/validators/listing'
 import { createAndPublishListing } from '@/lib/ebay/inventory'
+import { describeEbayError } from '@/lib/ebay/error'
 import { enqueueRetry } from '@/lib/retry'
+import { withContext } from '@/lib/log'
 
 export const POST = withAuth(async (req, userId) => {
   const body = await req.json()
@@ -76,15 +79,26 @@ export const POST = withAuth(async (req, userId) => {
       listed_at: new Date().toISOString(),
     }).eq('id', listing.id)
 
+    revalidatePath('/listings')
+    revalidatePath('/dashboard')
     return NextResponse.json({ ...listing, ebay_item_id: listingId, ebay_listing_url: listingUrl, status: 'active' }, { status: 201 })
   } catch (err) {
-    const errMsg = String(err)
+    const { summary, ctx } = describeEbayError(err)
+    withContext({
+      scope: 'api.listings.create',
+      user_id: userId,
+      listing_id: listing.id,
+      search_id: data.search_id,
+      sku,
+    }).error('Publish to eBay failed', { ...ctx, err: summary })
+
     await db.from('listings').update({
       status: 'failed',
-      error_message: errMsg,
+      error_message: summary.slice(0, 2000),
     }).eq('id', listing.id)
-    await enqueueRetry('listing', listing.id, errMsg)
-    return apiError(`eBay listing failed: ${errMsg}`, 502)
+    await enqueueRetry('listing', listing.id, summary)
+    revalidatePath('/listings')
+    return apiError(`eBay listing failed: ${summary}`, 502)
   }
 })
 

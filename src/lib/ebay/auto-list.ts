@@ -3,6 +3,7 @@ import { createAndPublishListing } from './inventory'
 import { getBusinessPolicies } from './policies'
 import { enqueueRetry } from '@/lib/retry'
 import { generateListingDescription } from '@/lib/ai/generate-description'
+import { describeEbayError } from './error'
 import { withContext, type LogContext } from '@/lib/log'
 import type { EbayItemSummary } from '@/types/ebay'
 
@@ -65,42 +66,6 @@ function recordStep(
   if (status === 'ok') logger.info(`step ok — ${step}: ${detail}`, logCtx)
   else if (status === 'warn') logger.warn(`step warn — ${step}: ${detail}`, logCtx)
   else logger.error(`step fail — ${step}: ${detail}`, logCtx)
-}
-
-interface EbayErrorBreakdown {
-  status?: number | string
-  errors?: Array<{
-    errorId?: number
-    domain?: string
-    category?: string
-    message?: string
-    longMessage?: string
-    parameters?: Array<{ name?: string; value?: string }>
-  }>
-  raw?: unknown
-}
-
-/** Extract a debuggable shape from an axios/fetch error so each step carries diagnostic context. */
-function describeEbayError(err: unknown): { summary: string; ctx: EbayErrorBreakdown } {
-  if (err && typeof err === 'object' && 'response' in err) {
-    const axiosErr = err as {
-      response?: { status?: number; data?: unknown }
-      message?: string
-    }
-    const status = axiosErr.response?.status
-    const data = axiosErr.response?.data as
-      | { errors?: EbayErrorBreakdown['errors'] }
-      | undefined
-
-    const first = data?.errors?.[0]
-    const summary = first
-      ? `eBay ${status ?? '?'} errorId=${first.errorId ?? '?'} ${first.message ?? axiosErr.message ?? 'no message'}`
-      : `eBay HTTP ${status ?? '?'}: ${JSON.stringify(data ?? axiosErr.message ?? err)}`
-
-    return { summary, ctx: { status, errors: data?.errors, raw: data } }
-  }
-  const message = err instanceof Error ? err.message : String(err)
-  return { summary: message, ctx: { raw: message } }
 }
 
 /**
