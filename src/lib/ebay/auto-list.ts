@@ -56,8 +56,16 @@ export async function autoCreateListing({ userId, searchId, bestMatch, imageUrls
   log(steps, 'Image URLs', 'ok', `${imageUrls.length} image(s) attached to listing`)
 
   // Step 1b: Generate AI-powered eBay description via OpenRouter
-  const description = await generateListingDescription(title)
-  log(steps, 'Generate Description', 'ok', `AI description generated (${description.length} chars)`)
+  const descResult = await generateListingDescription(title)
+  if (descResult.usedFallback) {
+    log(steps, 'Generate Description', 'fail',
+      `AI description unavailable — using fallback. Reason: ${descResult.error ?? 'unknown'}`)
+  } else {
+    log(steps, 'Generate Description', 'ok',
+      `AI description generated (${descResult.description.length} chars)`)
+  }
+  const description = descResult.description
+
 
   if (!categoryId) {
     log(steps, 'Parse Match', 'fail', 'No categoryId found on the matched product. eBay requires a category to list.')
