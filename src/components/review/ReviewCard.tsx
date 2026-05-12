@@ -173,16 +173,21 @@ export default function ReviewCard({ group, onSubmit, onSplit, splitBusy }: Prop
       title = 'Item Discarded'
       message = 'This group was discarded and removed from the queue.'
     } else if (isListed) {
-      title = 'Successfully Listed!'
-      message = `Listed on eBay with ${group.totalImages} photo${group.totalImages !== 1 ? 's' : ''}.`
+      title = 'Draft Ready for Review'
+      const photoBit = `${group.totalImages} photo${group.totalImages !== 1 ? 's' : ''}`
+      const aiBit =
+        response.listingResult?.descriptionSource === 'fallback'
+          ? ' AI description failed — placeholder used; you can edit before publishing.'
+          : ' AI description generated.'
+      message = `Saved a draft listing with ${photoBit}.${aiBit} Open Listings to publish to eBay.`
     } else if (listingFailed) {
-      bgColor = 'bg-red-50 border-red-200'; textColor = 'text-red-800'; 
+      bgColor = 'bg-red-50 border-red-200'; textColor = 'text-red-800';
       icon = (
          <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center text-red-600 mb-4 shadow-sm border border-red-200">
           <X className="w-6 h-6 md:w-7 md:h-7" strokeWidth={2.5} />
         </div>
       )
-      title = 'Listing Failed'
+      title = 'Draft Creation Failed'
       message = response.listingResult!.error ?? 'Unknown error'
     } else if (noMatch) {
       bgColor = 'bg-amber-50 border-amber-200'; textColor = 'text-amber-800'; 
@@ -211,14 +216,12 @@ export default function ReviewCard({ group, onSubmit, onSplit, splitBusy }: Prop
           <h3 className={`font-bold text-xl mb-2 ${textColor}`}>{title}</h3>
           <p className={`text-sm md:text-base opacity-90 ${textColor}`}>{message}</p>
           
-          {response.listingResult?.listingUrl && (
+          {response.listingResult?.success && response.listingResult.listingId && (
             <a
-              href={response.listingResult.listingUrl}
-              target="_blank"
-              rel="noopener noreferrer"
+              href={`/listings?status=draft`}
               className="mt-6 px-6 py-3 bg-white text-blue-600 border border-blue-200 rounded-full text-sm font-bold hover:bg-blue-50 hover:border-blue-300 transition-all shadow-sm flex items-center gap-2 group"
             >
-              View Listing on eBay
+              Review & Publish Draft
               <ExternalLink className="w-4 h-4 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
             </a>
           )}
@@ -249,21 +252,34 @@ export default function ReviewCard({ group, onSubmit, onSplit, splitBusy }: Prop
               <p className="text-xs font-bold uppercase tracking-wider opacity-70 mb-3 flex items-center gap-1.5">
                 <ShoppingCart className="w-3.5 h-3.5" /> Listing Pipeline
               </p>
-              {response.listingResult.steps.map((step, i) => (
-                <div key={i} className={`text-sm px-4 py-3 rounded-xl flex items-start gap-3 shadow-sm border ${step.status === 'ok' ? 'bg-white border-emerald-100' : 'bg-red-50 border-red-100'}`}>
-                  <span className={`mt-0.5 shrink-0 ${step.status === 'ok' ? 'text-emerald-500' : 'text-red-500'}`}>
-                    {step.status === 'ok' ? (
-                      <Check className="w-4 h-4" strokeWidth={3} />
-                    ) : (
-                      <X className="w-4 h-4" strokeWidth={3} />
-                    )}
-                  </span>
-                  <div>
-                    <span className="font-bold">{step.step}</span>
-                    <p className="opacity-80 mt-1 break-words text-xs md:text-sm">{step.detail}</p>
+              {response.listingResult.steps.map((step, i) => {
+                const tone =
+                  step.status === 'ok'
+                    ? { box: 'bg-white border-emerald-100', icon: 'text-emerald-500' }
+                    : step.status === 'warn'
+                      ? { box: 'bg-amber-50 border-amber-100', icon: 'text-amber-500' }
+                      : { box: 'bg-red-50 border-red-100', icon: 'text-red-500' }
+                return (
+                  <div
+                    key={i}
+                    className={`text-sm px-4 py-3 rounded-xl flex items-start gap-3 shadow-sm border ${tone.box}`}
+                  >
+                    <span className={`mt-0.5 shrink-0 ${tone.icon}`}>
+                      {step.status === 'ok' ? (
+                        <Check className="w-4 h-4" strokeWidth={3} />
+                      ) : step.status === 'warn' ? (
+                        <AlertTriangle className="w-4 h-4" strokeWidth={3} />
+                      ) : (
+                        <X className="w-4 h-4" strokeWidth={3} />
+                      )}
+                    </span>
+                    <div>
+                      <span className="font-bold">{step.step}</span>
+                      <p className="opacity-80 mt-1 break-words text-xs md:text-sm">{step.detail}</p>
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>

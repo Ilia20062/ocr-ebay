@@ -1,13 +1,14 @@
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { createAndPublishListing } from './inventory'
 import { getBusinessPolicies } from './policies'
+import { generateListingImageUrls } from './image-urls'
 import { enqueueRetry } from '@/lib/retry'
 import { generateListingDescription } from '@/lib/ai/generate-description'
 import { describeEbayError } from './error'
 import { withContext, type LogContext } from '@/lib/log'
 import type { EbayItemSummary } from '@/types/ebay'
 
-interface AutoListParams {
+interface DraftParams {
   userId: string
   searchId: string
   batchId?: string | null
@@ -26,10 +27,22 @@ export interface AutoListStep {
   context?: Record<string, unknown>
 }
 
-export interface AutoListResult {
+export interface DraftListingResult {
   success: boolean
-  listingUrl?: string
+  /** Internal DB row id once the listing has been persisted as a draft. */
   listingId?: string
+  /** AI-generated description body. */
+  description?: string
+  /** Whether the description came from OpenRouter or the placeholder fallback. */
+  descriptionSource?: 'ai' | 'fallback'
+  error?: string
+  steps: AutoListStep[]
+}
+
+export interface PublishListingResult {
+  success: boolean
+  ebayListingId?: string
+  ebayListingUrl?: string
   error?: string
   steps: AutoListStep[]
 }
@@ -69,34 +82,34 @@ function recordStep(
 }
 
 /**
- * Automatically creates and publishes an eBay listing from a product search result.
- * Returns step-by-step results AND emits structured logs so a single search_id /
- * sku is grep-able across the whole pipeline.
+ * Creates a *draft* listing from an eBay best-match result. Generates the AI
+ * description and inserts a row into `listings` with `status='draft'`. Does
+ * NOT contact eBay's Sell APIs. The user reviews the draft on the listings
+ * page and explicitly clicks "Publish to eBay" to invoke `publishListing`.
  */
-export async function autoCreateListing({
+export async function autoCreateDraftListing({
   userId,
   searchId,
   batchId,
   bestMatch,
   imageUrls,
-}: AutoListParams): Promise<AutoListResult> {
+}: DraftParams): Promise<DraftListingResult> {
   const steps: AutoListStep[] = []
   const db = getSupabaseAdminClient()
   const sku = `SKU-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`
   const logger = withContext({
-    scope: 'ebay.auto-list',
+    scope: 'ebay.draft',
     user_id: userId,
     search_id: searchId,
     batch_id: batchId ?? null,
     sku,
   })
 
-  logger.info('auto-list START', {
+  logger.info('draft START', {
     ebay_item_id: bestMatch.itemId,
     images: imageUrls.length,
   })
 
-  // Step 1: Parse best match data
   const title = bestMatch.title.slice(0, 80)
   const price = parseFloat(bestMatch.price.value)
   const currency = bestMatch.price.currency || 'USD'
@@ -124,7 +137,7 @@ export async function autoCreateListing({
     return { success: false, error: msg, steps }
   }
 
-  // Step 2: Generate AI-powered eBay description via OpenRouter
+  // Generate AI-powered eBay description via OpenRouter
   const aiResult = await generateListingDescription(title, {
     searchId,
     batchId: batchId ?? null,
@@ -165,7 +178,8 @@ export async function autoCreateListing({
   }
   const description = aiResult.description
 
-  // Step 3: Create draft listing in DB
+  // Insert draft row. `status='draft'` means "ready for user review, NOT yet
+  // pushed to eBay". The Publish button on /listings turns this into 'active'.
   const { data: listing, error: insertError } = await db.from('listings').insert({
     search_id: searchId,
     user_id: userId,
@@ -177,13 +191,12 @@ export async function autoCreateListing({
     condition,
     category_id: categoryId,
     sku,
-    status: 'submitting',
-    last_attempted_at: new Date().toISOString(),
+    status: 'draft',
   }).select().single()
 
   if (insertError || !listing) {
     const msg = insertError?.message ?? 'unknown error'
-    recordStep(steps, logger, 'Create Draft', 'fail', `DB insert failed: ${msg}`, {
+    recordStep(steps, logger, 'Save Draft', 'fail', `DB insert failed: ${msg}`, {
       pg_code: insertError?.code,
       pg_details: insertError?.details,
       pg_hint: insertError?.hint,
@@ -191,11 +204,85 @@ export async function autoCreateListing({
     return { success: false, error: `DB insert failed: ${msg}`, steps }
   }
 
-  recordStep(steps, logger, 'Create Draft', 'ok', `Draft listing created in DB: ${listing.id}`, {
-    listing_id: listing.id,
+  recordStep(steps, logger, 'Save Draft', 'ok',
+    `Draft saved — open /listings and click Publish to eBay when ready (listing_id=${listing.id})`,
+    { listing_id: listing.id },
+  )
+
+  logger.info('draft DONE — awaiting user publish', { listing_id: listing.id })
+
+  return {
+    success: true,
+    listingId: listing.id,
+    description,
+    descriptionSource: aiResult.source,
+    steps,
+  }
+}
+
+/**
+ * Publishes an existing draft (or retries a previously failed) listing to
+ * eBay. Resolves business policies (auto-opting-in if needed), re-signs image
+ * URLs from the originating batch, then calls the Sell APIs.
+ *
+ * Called by both `POST /api/listings/[id]/publish` (the user's explicit
+ * publish action from the listings page) and `POST /api/listings/[id]/retry`
+ * (which is now just a synonym for publish).
+ */
+export async function publishListing(
+  userId: string,
+  listingId: string,
+): Promise<PublishListingResult> {
+  const steps: AutoListStep[] = []
+  const db = getSupabaseAdminClient()
+  const logger = withContext({
+    scope: 'ebay.publish',
+    user_id: userId,
+    listing_id: listingId,
   })
 
-  // Step 4: Fetch business policies
+  logger.info('publish START')
+
+  const { data: listing, error: lookupErr } = await db
+    .from('listings')
+    .select('*')
+    .eq('id', listingId)
+    .eq('user_id', userId)
+    .single()
+
+  if (lookupErr || !listing) {
+    const msg = lookupErr?.message ?? 'not found'
+    recordStep(steps, logger, 'Load Listing', 'fail', msg)
+    return { success: false, error: msg, steps }
+  }
+  if (listing.status === 'active') {
+    recordStep(steps, logger, 'Load Listing', 'fail', 'Listing already active on eBay')
+    return { success: false, error: 'Listing already active', steps }
+  }
+  if (!listing.title || listing.price === null || !listing.category_id) {
+    const msg = 'Listing missing required fields (title, price, category)'
+    recordStep(steps, logger, 'Load Listing', 'fail', msg, {
+      has_title: !!listing.title,
+      has_price: listing.price !== null,
+      has_category: !!listing.category_id,
+    })
+    return { success: false, error: msg, steps }
+  }
+
+  const sku = listing.sku ?? `SKU-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`
+  recordStep(steps, logger, 'Load Listing', 'ok',
+    `title="${listing.title}", price=${listing.price} ${listing.currency}, sku=${sku}, status was '${listing.status}'`,
+    { sku, prior_status: listing.status, search_id: listing.search_id },
+  )
+
+  await db.from('listings').update({
+    status: 'submitting',
+    attempt_count: (listing.attempt_count ?? 0) + 1,
+    last_attempted_at: new Date().toISOString(),
+    error_message: null,
+  }).eq('id', listingId)
+
+  // Resolve business policies (with the auto-opt-in inside getBusinessPolicies).
   let policies
   try {
     policies = await getBusinessPolicies(userId)
@@ -208,31 +295,49 @@ export async function autoCreateListing({
       },
     )
   } catch (err) {
-    const { summary, ctx: errCtx } = describeEbayError(err)
-    recordStep(steps, logger, 'Fetch Policies', 'fail', summary, {
-      ...errCtx,
-      listing_id: listing.id,
-    })
+    const { summary, ctx } = describeEbayError(err)
+    recordStep(steps, logger, 'Fetch Policies', 'fail', summary, { ...ctx })
     await db.from('listings').update({
       status: 'failed',
       error_message: `Policies: ${summary}`.slice(0, 2000),
-    }).eq('id', listing.id)
-    await enqueueRetry('listing', listing.id, summary)
+    }).eq('id', listingId)
+    await enqueueRetry('listing', listingId, summary)
     return { success: false, error: summary, steps }
   }
 
-  // Step 5: Create inventory item & publish on eBay
+  // Re-derive image URLs (signed URLs from draft creation will have expired).
+  let imageUrls: string[] = []
+  if (listing.search_id) {
+    const { data: search } = await db
+      .from('product_searches')
+      .select('batch_id')
+      .eq('id', listing.search_id)
+      .single()
+    if (search?.batch_id) {
+      const { data: imgs } = await db
+        .from('images')
+        .select('id, storage_path')
+        .eq('batch_id', search.batch_id)
+        .order('created_at', { ascending: true })
+      imageUrls = await generateListingImageUrls(db, imgs ?? [])
+    }
+  }
+  recordStep(steps, logger, 'Re-sign Images', 'ok',
+    `${imageUrls.length} fresh signed image URL(s) prepared`,
+    { images: imageUrls.length },
+  )
+
   try {
-    const { listingId, listingUrl } = await createAndPublishListing({
+    const { listingId: ebayListingId, listingUrl } = await createAndPublishListing({
       userId,
       sku,
-      title,
-      description,
-      price,
-      currency,
-      quantity: 1,
-      condition,
-      categoryId,
+      title: listing.title,
+      description: listing.description ?? '',
+      price: listing.price,
+      currency: listing.currency,
+      quantity: listing.quantity,
+      condition: listing.condition ?? 'USED_EXCELLENT',
+      categoryId: listing.category_id,
       fulfillmentPolicyId: policies.fulfillmentPolicyId,
       paymentPolicyId: policies.paymentPolicyId,
       returnPolicyId: policies.returnPolicyId,
@@ -240,44 +345,39 @@ export async function autoCreateListing({
     })
 
     recordStep(steps, logger, 'Publish to eBay', 'ok',
-      `Listed! listingId=${listingId}, url=${listingUrl}`,
-      { listing_id: listing.id, ebay_listing_id: listingId, ebay_listing_url: listingUrl },
+      `Listed! listingId=${ebayListingId}, url=${listingUrl}`,
+      { ebay_listing_id: ebayListingId, ebay_listing_url: listingUrl },
     )
 
-    // Step 6: Update DB with eBay details
     const { error: updateErr } = await db.from('listings').update({
-      ebay_item_id: listingId,
+      ebay_item_id: ebayListingId,
       ebay_listing_url: listingUrl,
       status: 'active',
       listed_at: new Date().toISOString(),
-    }).eq('id', listing.id)
+      error_message: null,
+    }).eq('id', listingId)
 
     if (updateErr) {
       recordStep(steps, logger, 'Update DB', 'warn',
         `Listing went live on eBay but DB update failed: ${updateErr.message}`,
-        { listing_id: listing.id, pg_code: updateErr.code },
+        { pg_code: updateErr.code },
       )
     } else {
-      recordStep(steps, logger, 'Update DB', 'ok', 'Listing marked as active', {
-        listing_id: listing.id,
-      })
+      recordStep(steps, logger, 'Update DB', 'ok', 'Listing marked as active')
     }
 
-    logger.info('auto-list DONE', { listing_id: listing.id, ebay_listing_id: listingId })
-    return { success: true, listingUrl, listingId, steps }
+    logger.info('publish DONE', { ebay_listing_id: ebayListingId })
+    return { success: true, ebayListingId, ebayListingUrl: listingUrl, steps }
   } catch (err) {
-    const { summary, ctx: errCtx } = describeEbayError(err)
-    recordStep(steps, logger, 'Publish to eBay', 'fail', summary, {
-      ...errCtx,
-      listing_id: listing.id,
-    })
+    const { summary, ctx } = describeEbayError(err)
+    recordStep(steps, logger, 'Publish to eBay', 'fail', summary, { ...ctx })
 
     await db.from('listings').update({
       status: 'failed',
       error_message: summary.slice(0, 2000),
-    }).eq('id', listing.id)
+    }).eq('id', listingId)
 
-    await enqueueRetry('listing', listing.id, summary)
+    await enqueueRetry('listing', listingId, summary)
     return { success: false, error: summary, steps }
   }
 }

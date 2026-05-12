@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server'
 import { revalidatePath } from 'next/cache'
-import { withAuth } from '@/lib/middleware'
+import { withAuth, apiError } from '@/lib/middleware'
 import { publishListing } from '@/lib/ebay/auto-list'
 
 /**
- * POST /api/listings/[id]/retry
+ * POST /api/listings/[id]/publish
  *
- * Synonym of /publish — same code path. Keeps the URL stable for the existing
- * "Retry" button on `failed` listings; new code should prefer /publish.
+ * Pushes a draft (or previously-failed) listing onto eBay. Idempotent in the
+ * sense that publishListing skips already-active rows. This is what the
+ * "Publish to eBay" button on /listings hits; /retry is an alias.
  */
 export const POST = withAuth(async (_req, userId, params) => {
   const listingId = params!.id

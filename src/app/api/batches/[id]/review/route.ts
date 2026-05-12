@@ -4,7 +4,7 @@ import { withAuth, apiError } from '@/lib/middleware'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { batchReviewSchema } from '@/lib/validators/upload'
 import { searchEbayProducts, selectBestMatch } from '@/lib/ebay/search'
-import { autoCreateListing, type AutoListResult } from '@/lib/ebay/auto-list'
+import { autoCreateDraftListing, type DraftListingResult } from '@/lib/ebay/auto-list'
 import { generateListingImageUrls } from '@/lib/ebay/image-urls'
 import { enqueueRetry } from '@/lib/retry'
 import { withContext } from '@/lib/log'
@@ -110,7 +110,7 @@ export const PATCH = withAuth(async (req, userId, params) => {
   }
 
   let searchResult: 'found' | 'not_found' | 'no_code' | 'search_error' = 'no_code'
-  let listingResult: AutoListResult | undefined
+  let listingResult: DraftListingResult | undefined
   const searchDebug: { itemCount?: number; bestMatchTitle?: string; bestMatchId?: string } = {}
 
   try {
@@ -137,9 +137,12 @@ export const PATCH = withAuth(async (req, userId, params) => {
       searchResult = 'found'
 
       const imageUrls = await generateListingImageUrls(db, groupImages)
-      debug(`Signed ${imageUrls.length} image URL(s) for eBay`)
+      debug(`Signed ${imageUrls.length} image URL(s) for draft preview`)
 
-      listingResult = await autoCreateListing({
+      // Create a *draft* listing only — AI description + DB row. Does NOT
+      // contact eBay's Sell APIs. The user reviews everything on /listings
+      // and clicks "Publish to eBay" to actually list.
+      listingResult = await autoCreateDraftListing({
         userId,
         searchId: search.id,
         batchId,
@@ -147,18 +150,17 @@ export const PATCH = withAuth(async (req, userId, params) => {
         imageUrls,
       })
 
-      // Only mark listed/failed when an actual listing was attempted.
+      // Move the batch out of the review queue when a draft was created
+      // successfully; keep it reviewable if draft creation itself failed.
       await db
         .from('upload_batches')
-        .update({ status: listingResult.success ? 'listed' : 'awaiting_review' })
+        .update({ status: listingResult.success ? 'drafted' : 'awaiting_review' })
         .eq('id', batchId)
       if (!listingResult.success) {
-        debug(`Listing failed; batch left at awaiting_review so you can retry.`)
+        debug(`Draft creation failed; batch left at awaiting_review so you can retry.`)
       }
 
-      // Invalidate caches so /listings shows the new row on the next nav and
-      // /dashboard counts update. Without this the App Router serves the stale
-      // client-side cache and the user sees an empty listings page.
+      // Invalidate caches so /listings shows the new draft row on next nav.
       revalidatePath('/listings')
       revalidatePath('/dashboard')
       withContext({
@@ -166,10 +168,11 @@ export const PATCH = withAuth(async (req, userId, params) => {
         user_id: userId,
         batch_id: batchId,
         search_id: search.id,
-      }).info('Revalidated /listings and /dashboard after auto-list', {
-        listing_success: listingResult.success,
+      }).info('Draft listing created — awaiting user publish', {
+        draft_success: listingResult.success,
         listing_id: listingResult.listingId,
-        listing_url: listingResult.listingUrl,
+        description_source: listingResult.descriptionSource,
+        description_chars: listingResult.description?.length,
         err: listingResult.error,
       })
     } else {

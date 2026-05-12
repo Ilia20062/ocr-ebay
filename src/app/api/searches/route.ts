@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { withAuth, apiError } from '@/lib/middleware'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { searchEbayProducts, selectBestMatch } from '@/lib/ebay/search'
-import { autoCreateListing } from '@/lib/ebay/auto-list'
+import { autoCreateDraftListing } from '@/lib/ebay/auto-list'
 import { generateListingImageUrls } from '@/lib/ebay/image-urls'
 import { enqueueRetry } from '@/lib/retry'
 import { withContext } from '@/lib/log'
@@ -137,7 +137,7 @@ export const POST = withAuth(async (req, userId) => {
       const imageUrls = await generateListingImageUrls(db, imgs ?? [])
       searchLog.info('Image URLs prepared', { images: imageUrls.length })
 
-      listingResult = await autoCreateListing({
+      listingResult = await autoCreateDraftListing({
         userId,
         searchId: search.id,
         batchId: body.batch_id,
@@ -146,7 +146,7 @@ export const POST = withAuth(async (req, userId) => {
       })
 
       if (!listingResult.success) {
-        searchLog.warn('auto-list returned failure', { err: listingResult.error })
+        searchLog.warn('Draft creation returned failure', { err: listingResult.error })
       }
     } else {
       searchLog.warn('No best match — skipping auto-list')

@@ -30,7 +30,7 @@ export interface GroupForReview {
 
 interface AutoListStep {
   step: string
-  status: 'ok' | 'fail'
+  status: 'ok' | 'warn' | 'fail'
   detail: string
   timestamp: string
 }
@@ -40,9 +40,16 @@ export interface ReviewResponse {
   discarded?: boolean
   searchResult?: string
   searchDebug?: { itemCount?: number; bestMatchTitle?: string; bestMatchId?: string }
+  /**
+   * Draft creation result. `success=true` means a draft listing was saved
+   * to the DB — the listing has NOT been pushed to eBay yet; the user
+   * publishes it from /listings.
+   */
   listingResult?: {
     success: boolean
-    listingUrl?: string
+    listingId?: string
+    description?: string
+    descriptionSource?: 'ai' | 'fallback'
     error?: string
     steps?: AutoListStep[]
   }
