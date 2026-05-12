@@ -3,47 +3,133 @@ import { createAndPublishListing } from './inventory'
 import { getBusinessPolicies } from './policies'
 import { enqueueRetry } from '@/lib/retry'
 import { generateListingDescription } from '@/lib/ai/generate-description'
+import { withContext, type LogContext } from '@/lib/log'
 import type { EbayItemSummary } from '@/types/ebay'
 
 interface AutoListParams {
   userId: string
   searchId: string
+  batchId?: string | null
   bestMatch: EbayItemSummary
   imageUrls: string[]
 }
 
+export type AutoListStepStatus = 'ok' | 'warn' | 'fail'
+
 export interface AutoListStep {
   step: string
-  status: 'ok' | 'fail'
+  status: AutoListStepStatus
   detail: string
   timestamp: string
+  /** Structured payload for debugging (status_code, request_id, ebay error codes, …). */
+  context?: Record<string, unknown>
 }
 
 export interface AutoListResult {
   success: boolean
   listingUrl?: string
+  listingId?: string
   error?: string
   steps: AutoListStep[]
 }
 
-function log(steps: AutoListStep[], step: string, status: 'ok' | 'fail', detail: string) {
-  const entry: AutoListStep = { step, status, detail, timestamp: new Date().toISOString() }
-  steps.push(entry)
-  if (status === 'ok') {
-    console.log(`[auto-list] ✅ ${step}: ${detail}`)
-  } else {
-    console.error(`[auto-list] ❌ ${step}: ${detail}`)
+function clean(ctx?: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!ctx) return undefined
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(ctx)) {
+    if (v === undefined || v === null || v === '') continue
+    out[k] = v
   }
+  return Object.keys(out).length ? out : undefined
+}
+
+function recordStep(
+  steps: AutoListStep[],
+  logger: ReturnType<typeof withContext>,
+  step: string,
+  status: AutoListStepStatus,
+  detail: string,
+  context?: Record<string, unknown>,
+): void {
+  const cleaned = clean(context)
+  const entry: AutoListStep = {
+    step,
+    status,
+    detail,
+    timestamp: new Date().toISOString(),
+    ...(cleaned ? { context: cleaned } : {}),
+  }
+  steps.push(entry)
+
+  const logCtx: LogContext = { step, ...(cleaned ?? {}) }
+  if (status === 'ok') logger.info(`step ok — ${step}: ${detail}`, logCtx)
+  else if (status === 'warn') logger.warn(`step warn — ${step}: ${detail}`, logCtx)
+  else logger.error(`step fail — ${step}: ${detail}`, logCtx)
+}
+
+interface EbayErrorBreakdown {
+  status?: number | string
+  errors?: Array<{
+    errorId?: number
+    domain?: string
+    category?: string
+    message?: string
+    longMessage?: string
+    parameters?: Array<{ name?: string; value?: string }>
+  }>
+  raw?: unknown
+}
+
+/** Extract a debuggable shape from an axios/fetch error so each step carries diagnostic context. */
+function describeEbayError(err: unknown): { summary: string; ctx: EbayErrorBreakdown } {
+  if (err && typeof err === 'object' && 'response' in err) {
+    const axiosErr = err as {
+      response?: { status?: number; data?: unknown }
+      message?: string
+    }
+    const status = axiosErr.response?.status
+    const data = axiosErr.response?.data as
+      | { errors?: EbayErrorBreakdown['errors'] }
+      | undefined
+
+    const first = data?.errors?.[0]
+    const summary = first
+      ? `eBay ${status ?? '?'} errorId=${first.errorId ?? '?'} ${first.message ?? axiosErr.message ?? 'no message'}`
+      : `eBay HTTP ${status ?? '?'}: ${JSON.stringify(data ?? axiosErr.message ?? err)}`
+
+    return { summary, ctx: { status, errors: data?.errors, raw: data } }
+  }
+  const message = err instanceof Error ? err.message : String(err)
+  return { summary: message, ctx: { raw: message } }
 }
 
 /**
  * Automatically creates and publishes an eBay listing from a product search result.
- * Returns detailed step-by-step results so the UI can show exactly what happened.
+ * Returns step-by-step results AND emits structured logs so a single search_id /
+ * sku is grep-able across the whole pipeline.
  */
-export async function autoCreateListing({ userId, searchId, bestMatch, imageUrls }: AutoListParams): Promise<AutoListResult> {
+export async function autoCreateListing({
+  userId,
+  searchId,
+  batchId,
+  bestMatch,
+  imageUrls,
+}: AutoListParams): Promise<AutoListResult> {
   const steps: AutoListStep[] = []
   const db = getSupabaseAdminClient()
   const sku = `SKU-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`
+  const logger = withContext({
+    scope: 'ebay.auto-list',
+    user_id: userId,
+    search_id: searchId,
+    batch_id: batchId ?? null,
+    sku,
+  })
+
+  logger.info('auto-list START', {
+    ebay_item_id: bestMatch.itemId,
+    images: imageUrls.length,
+  })
 
   // Step 1: Parse best match data
   const title = bestMatch.title.slice(0, 80)
@@ -52,32 +138,69 @@ export async function autoCreateListing({ userId, searchId, bestMatch, imageUrls
   const condition = bestMatch.condition || 'USED_EXCELLENT'
   const categoryId = bestMatch.categories?.[0]?.categoryId || ''
 
-  log(steps, 'Parse Match', 'ok', `title="${title}", price=${price} ${currency}, condition=${condition}, category=${categoryId || 'NONE'}, sku=${sku}`)
-  log(steps, 'Image URLs', 'ok', `${imageUrls.length} image(s) attached to listing`)
-
-  // Step 1b: Generate AI-powered eBay description via OpenRouter
-  const descResult = await generateListingDescription(title)
-  if (descResult.usedFallback) {
-    log(steps, 'Generate Description', 'fail',
-      `AI description unavailable — using fallback. Reason: ${descResult.error ?? 'unknown'}`)
-  } else {
-    log(steps, 'Generate Description', 'ok',
-      `AI description generated (${descResult.description.length} chars)`)
-  }
-  const description = descResult.description
-
+  recordStep(steps, logger, 'Parse Match', 'ok',
+    `title="${title}", price=${price} ${currency}, condition=${condition}, category=${categoryId || 'NONE'}, sku=${sku}`,
+    { title_len: title.length, price, currency, condition, category_id: categoryId },
+  )
+  recordStep(steps, logger, 'Image URLs', 'ok',
+    `${imageUrls.length} image(s) attached to listing`,
+    { images: imageUrls.length },
+  )
 
   if (!categoryId) {
-    log(steps, 'Parse Match', 'fail', 'No categoryId found on the matched product. eBay requires a category to list.')
+    const msg = 'No categoryId found on the matched product. eBay requires a category to list.'
+    recordStep(steps, logger, 'Parse Match', 'fail', msg, { ebay_item_id: bestMatch.itemId })
     return { success: false, error: 'No category found on matched product', steps }
   }
 
   if (isNaN(price) || price <= 0) {
-    log(steps, 'Parse Match', 'fail', `Invalid price: "${bestMatch.price.value}"`)
-    return { success: false, error: `Invalid price: ${bestMatch.price.value}`, steps }
+    const msg = `Invalid price: "${bestMatch.price.value}"`
+    recordStep(steps, logger, 'Parse Match', 'fail', msg, { price_raw: bestMatch.price.value })
+    return { success: false, error: msg, steps }
   }
 
-  // Step 2: Create draft listing in DB
+  // Step 2: Generate AI-powered eBay description via OpenRouter
+  const aiResult = await generateListingDescription(title, {
+    searchId,
+    batchId: batchId ?? null,
+    sku,
+    userId,
+  })
+
+  if (aiResult.source === 'ai') {
+    recordStep(steps, logger, 'Generate Description', 'ok',
+      `AI description generated (${aiResult.description.length} chars, ${aiResult.attempts} attempt(s), ${aiResult.durMs}ms)`,
+      {
+        source: 'ai',
+        model: aiResult.model,
+        request_id: aiResult.requestId,
+        response_id: aiResult.responseId,
+        prompt_tokens: aiResult.promptTokens,
+        completion_tokens: aiResult.completionTokens,
+        total_tokens: aiResult.totalTokens,
+        dur_ms: aiResult.durMs,
+        attempts: aiResult.attempts,
+        chars: aiResult.description.length,
+        finish_reason: aiResult.finishReason,
+      },
+    )
+  } else {
+    recordStep(steps, logger, 'Generate Description', 'warn',
+      `AI generation failed after ${aiResult.attempts} attempt(s) — using fallback placeholder. Cause: ${aiResult.error ?? 'unknown'}`,
+      {
+        source: 'fallback',
+        model: aiResult.model,
+        request_id: aiResult.requestId,
+        last_status: aiResult.lastStatus,
+        dur_ms: aiResult.durMs,
+        attempts: aiResult.attempts,
+        err: aiResult.error,
+      },
+    )
+  }
+  const description = aiResult.description
+
+  // Step 3: Create draft listing in DB
   const { data: listing, error: insertError } = await db.from('listings').insert({
     search_id: searchId,
     user_id: userId,
@@ -94,26 +217,46 @@ export async function autoCreateListing({ userId, searchId, bestMatch, imageUrls
   }).select().single()
 
   if (insertError || !listing) {
-    log(steps, 'Create Draft', 'fail', `DB insert failed: ${insertError?.message ?? 'unknown error'}`)
-    return { success: false, error: `DB insert failed: ${insertError?.message ?? 'unknown'}`, steps }
+    const msg = insertError?.message ?? 'unknown error'
+    recordStep(steps, logger, 'Create Draft', 'fail', `DB insert failed: ${msg}`, {
+      pg_code: insertError?.code,
+      pg_details: insertError?.details,
+      pg_hint: insertError?.hint,
+    })
+    return { success: false, error: `DB insert failed: ${msg}`, steps }
   }
 
-  log(steps, 'Create Draft', 'ok', `Draft listing created in DB: ${listing.id}`)
+  recordStep(steps, logger, 'Create Draft', 'ok', `Draft listing created in DB: ${listing.id}`, {
+    listing_id: listing.id,
+  })
 
-  // Step 3: Fetch business policies
+  // Step 4: Fetch business policies
   let policies
   try {
     policies = await getBusinessPolicies(userId)
-    log(steps, 'Fetch Policies', 'ok', `fulfillment=${policies.fulfillmentPolicyId}, payment=${policies.paymentPolicyId}, return=${policies.returnPolicyId}`)
+    recordStep(steps, logger, 'Fetch Policies', 'ok',
+      `fulfillment=${policies.fulfillmentPolicyId}, payment=${policies.paymentPolicyId}, return=${policies.returnPolicyId}`,
+      {
+        fulfillment_policy_id: policies.fulfillmentPolicyId,
+        payment_policy_id: policies.paymentPolicyId,
+        return_policy_id: policies.returnPolicyId,
+      },
+    )
   } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err)
-    log(steps, 'Fetch Policies', 'fail', errMsg)
-    await db.from('listings').update({ status: 'failed', error_message: `Policies: ${errMsg}` }).eq('id', listing.id)
-    await enqueueRetry('listing', listing.id, errMsg)
-    return { success: false, error: errMsg, steps }
+    const { summary, ctx: errCtx } = describeEbayError(err)
+    recordStep(steps, logger, 'Fetch Policies', 'fail', summary, {
+      ...errCtx,
+      listing_id: listing.id,
+    })
+    await db.from('listings').update({
+      status: 'failed',
+      error_message: `Policies: ${summary}`.slice(0, 2000),
+    }).eq('id', listing.id)
+    await enqueueRetry('listing', listing.id, summary)
+    return { success: false, error: summary, steps }
   }
 
-  // Step 4: Create inventory item on eBay
+  // Step 5: Create inventory item & publish on eBay
   try {
     const { listingId, listingUrl } = await createAndPublishListing({
       userId,
@@ -131,38 +274,45 @@ export async function autoCreateListing({ userId, searchId, bestMatch, imageUrls
       imageUrls,
     })
 
-    log(steps, 'Publish to eBay', 'ok', `Listed! listingId=${listingId}, url=${listingUrl}`)
+    recordStep(steps, logger, 'Publish to eBay', 'ok',
+      `Listed! listingId=${listingId}, url=${listingUrl}`,
+      { listing_id: listing.id, ebay_listing_id: listingId, ebay_listing_url: listingUrl },
+    )
 
-    // Step 5: Update DB with eBay details
-    await db.from('listings').update({
+    // Step 6: Update DB with eBay details
+    const { error: updateErr } = await db.from('listings').update({
       ebay_item_id: listingId,
       ebay_listing_url: listingUrl,
       status: 'active',
       listed_at: new Date().toISOString(),
     }).eq('id', listing.id)
 
-    log(steps, 'Update DB', 'ok', 'Listing marked as active')
-    return { success: true, listingUrl, steps }
-  } catch (err) {
-    // Extract detailed eBay error info
-    let errMsg: string
-    if (err && typeof err === 'object' && 'response' in err) {
-      const axiosErr = err as { response?: { status?: number; data?: unknown }; message?: string }
-      const statusCode = axiosErr.response?.status ?? 'unknown'
-      const responseData = JSON.stringify(axiosErr.response?.data ?? {})
-      errMsg = `eBay API ${statusCode}: ${responseData}`
+    if (updateErr) {
+      recordStep(steps, logger, 'Update DB', 'warn',
+        `Listing went live on eBay but DB update failed: ${updateErr.message}`,
+        { listing_id: listing.id, pg_code: updateErr.code },
+      )
     } else {
-      errMsg = err instanceof Error ? err.message : String(err)
+      recordStep(steps, logger, 'Update DB', 'ok', 'Listing marked as active', {
+        listing_id: listing.id,
+      })
     }
 
-    log(steps, 'Publish to eBay', 'fail', errMsg)
+    logger.info('auto-list DONE', { listing_id: listing.id, ebay_listing_id: listingId })
+    return { success: true, listingUrl, listingId, steps }
+  } catch (err) {
+    const { summary, ctx: errCtx } = describeEbayError(err)
+    recordStep(steps, logger, 'Publish to eBay', 'fail', summary, {
+      ...errCtx,
+      listing_id: listing.id,
+    })
 
     await db.from('listings').update({
       status: 'failed',
-      error_message: errMsg.slice(0, 2000),
+      error_message: summary.slice(0, 2000),
     }).eq('id', listing.id)
 
-    await enqueueRetry('listing', listing.id, errMsg)
-    return { success: false, error: errMsg, steps }
+    await enqueueRetry('listing', listing.id, summary)
+    return { success: false, error: summary, steps }
   }
 }

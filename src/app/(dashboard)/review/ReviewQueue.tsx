@@ -217,7 +217,12 @@ export default function ReviewQueue({ initialGroups, sessionId }: Props) {
               group={g}
               onSubmit={async (batchId, action, override) => {
                 const r = await handleReview(batchId, action, override)
-                if (r.success || r.discarded) handleCardComplete(batchId)
+                if (r.success || r.discarded) {
+                  handleCardComplete(batchId)
+                  // Invalidate the App Router client cache so /listings,
+                  // /batches and /dashboard show the new row on next nav.
+                  router.refresh()
+                }
                 return r
               }}
               onSplit={sessionMode ? (imageIds) => handleSplit(g.batchId, imageIds) : undefined}

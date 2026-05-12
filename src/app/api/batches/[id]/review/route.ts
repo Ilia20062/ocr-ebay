@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { revalidatePath } from 'next/cache'
 import { withAuth, apiError } from '@/lib/middleware'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { batchReviewSchema } from '@/lib/validators/upload'
@@ -6,6 +7,7 @@ import { searchEbayProducts, selectBestMatch } from '@/lib/ebay/search'
 import { autoCreateListing, type AutoListResult } from '@/lib/ebay/auto-list'
 import { generateListingImageUrls } from '@/lib/ebay/image-urls'
 import { enqueueRetry } from '@/lib/retry'
+import { withContext } from '@/lib/log'
 import type { Json } from '@/types/supabase'
 
 export const PATCH = withAuth(async (req, userId, params) => {
@@ -140,6 +142,7 @@ export const PATCH = withAuth(async (req, userId, params) => {
       listingResult = await autoCreateListing({
         userId,
         searchId: search.id,
+        batchId,
         bestMatch: best,
         imageUrls,
       })
@@ -152,6 +155,23 @@ export const PATCH = withAuth(async (req, userId, params) => {
       if (!listingResult.success) {
         debug(`Listing failed; batch left at awaiting_review so you can retry.`)
       }
+
+      // Invalidate caches so /listings shows the new row on the next nav and
+      // /dashboard counts update. Without this the App Router serves the stale
+      // client-side cache and the user sees an empty listings page.
+      revalidatePath('/listings')
+      revalidatePath('/dashboard')
+      withContext({
+        scope: 'api.batches.review',
+        user_id: userId,
+        batch_id: batchId,
+        search_id: search.id,
+      }).info('Revalidated /listings and /dashboard after auto-list', {
+        listing_success: listingResult.success,
+        listing_id: listingResult.listingId,
+        listing_url: listingResult.listingUrl,
+        err: listingResult.error,
+      })
     } else {
       // No match on eBay — keep the batch reviewable so the user can override or discard.
       searchResult = 'not_found'
@@ -167,6 +187,12 @@ export const PATCH = withAuth(async (req, userId, params) => {
     // Leave batch in awaiting_review on transient failure so the user can retry.
     await db.from('upload_batches').update({ status: 'awaiting_review' }).eq('id', batchId)
   }
+
+  // /review reflects batch state (we just changed it); the dashboard counts
+  // searches & batches and should also refresh.
+  revalidatePath('/review')
+  revalidatePath('/batches')
+  revalidatePath('/dashboard')
 
   return NextResponse.json({
     success: true,

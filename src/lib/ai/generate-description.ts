@@ -4,18 +4,21 @@
  * Calls the OpenRouter Chat Completions API to produce a SEO-optimised
  * eBay listing description from a raw product title.
  *
- * - Retries up to MAX_RETRIES times with exponential backoff
- * - Throws on every failure so callers can decide to fall back or re-queue
- * - Model is configurable via OPENROUTER_MODEL env var
+ * - Retries on 408/425/429/5xx with exponential backoff. Does NOT retry on
+ *   4xx (bad request / auth) — those are bugs, not transient failures.
+ * - 60s request timeout via AbortController; the whole call cannot hang.
+ * - Returns rich result metadata so callers can surface accurate status
+ *   (e.g. "fallback used because OpenRouter 429") instead of silently
+ *   shipping a placeholder description to eBay.
  */
 
+import { log, type LogContext } from "@/lib/log";
+
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-
-// A well-known free model that exists on OpenRouter (override via OPENROUTER_MODEL env var)
 const DEFAULT_MODEL = "openai/gpt-oss-120b:free";
-
-const MAX_RETRIES = 3;
-const BASE_DELAY_MS = 1000; // 1s, 2s, 4s
+const REQUEST_TIMEOUT_MS = 60_000;
+const MAX_ATTEMPTS = 3;
+const BASE_BACKOFF_MS = 1_000; // 1s, 2s, 4s capped at 5s
 
 const SYSTEM_PROMPT = `You are an eBay SEO and used OEM auto parts expert for the U.S. market.
 Your task: based on the provided TITLE, generate a clean, ready-to-use eBay listing description in English (SEO-optimized for search).
@@ -128,131 +131,424 @@ If info is limited, still produce a careful, informative description and recomme
 Output:
 Only the final description in perfect U.S. English, following all formatting and section rules above.`;
 
-/** Sleep helper for retry backoff */
-function sleep(ms: number) {
-  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+export type DescriptionSource = "ai" | "fallback";
+
+/** Identifying context propagated into every log line for this call. */
+export interface GenerateDescriptionContext {
+  searchId?: string | null;
+  batchId?: string | null;
+  sku?: string | null;
+  userId?: string | null;
+}
+
+export interface GenerateDescriptionResult {
+  description: string;
+  /** `'ai'` when OpenRouter produced usable text; `'fallback'` otherwise. */
+  source: DescriptionSource;
+  /** Whether a placeholder was substituted. Kept as alias of `source==='fallback'` for ergonomics. */
+  usedFallback: boolean;
+  /** Resolved model identifier used in the request. */
+  model: string;
+  /** OpenRouter `x-request-id` header — quote this when filing vendor tickets. */
+  requestId?: string;
+  /** OpenRouter `id` field from the response body. */
+  responseId?: string;
+  /** End-to-end wall time including retries (ms). */
+  durMs: number;
+  /** Number of HTTP attempts made. 0 when pre-flight rejected (no key, empty title). */
+  attempts: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  /** Populated when `source === 'fallback'`. Human-readable summary of *why*. */
+  error?: string;
+  /** Last HTTP status observed (set on non-OK responses). */
+  lastStatus?: number;
+  /** OpenRouter finish_reason from the chosen completion (e.g. `'stop'`, `'length'`). */
+  finishReason?: string;
+}
+
+interface OpenRouterResponse {
+  id?: string;
+  choices?: Array<{
+    message?: { content?: string };
+    finish_reason?: string;
+  }>;
+  error?: { message?: string; code?: number | string; type?: string };
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
+}
+
+/** Sleep helper for retry backoff. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function backoffMs(attempt: number): number {
+  return Math.min(5_000, BASE_BACKOFF_MS * 2 ** (attempt - 1));
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+function looksLikeRefusal(content: string): boolean {
+  if (content.length < 80) return true; // structured listing is always longer
+  const low = content.toLowerCase().slice(0, 200);
+  return (
+    low.startsWith("i'm sorry") ||
+    low.startsWith("i am sorry") ||
+    low.startsWith("i cannot") ||
+    low.startsWith("i can't") ||
+    low.startsWith("as an ai") ||
+    low.startsWith("sorry, ") ||
+    low.includes("cannot comply")
+  );
+}
+
+function sanitize(content: string): string {
+  let s = content.trim();
+  // Strip markdown fences if the model added them despite the prompt.
+  if (s.startsWith("```")) {
+    s = s
+      .replace(/^```[a-zA-Z]*\n?/, "")
+      .replace(/```\s*$/, "")
+      .trim();
+  }
+  return s;
+}
+
+function fallbackDescription(title: string): string {
+  const safeTitle = title?.trim() || "Used OEM auto part";
+  return (
+    `${safeTitle} — Used OEM auto part in good condition. ` +
+    `Please verify fitment by OEM part number or VIN before ordering. ` +
+    `Ships within 1 business day. 90-day warranty & easy returns. Expedited shipping available.`
+  );
+}
+
+interface AttemptOutcome {
+  kind: "ok" | "retry" | "fatal";
+  content?: string;
+  finishReason?: string;
+  responseId?: string;
+  requestId?: string;
+  status?: number;
+  usage?: OpenRouterResponse["usage"];
+  err?: string;
 }
 
 /**
- * Try ONE call to the OpenRouter API.
- * Throws a descriptive error if anything goes wrong.
+ * Try ONE call to the OpenRouter API. Returns a discriminated outcome so the
+ * caller knows whether to retry, give up, or use the content.
  */
 async function callOpenRouter(
   title: string,
   apiKey: string,
   model: string,
-): Promise<string> {
-  const response = await fetch(OPENROUTER_API_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer":
-        process.env.NEXT_PUBLIC_APP_URL ?? "https://localhost:3000",
-      "X-Title": "OCR-CRM eBay Auto-Lister",
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: `TITLE: ${title}` },
-      ],
-      max_tokens: 2048,
-      temperature: 0.4,
-    }),
-  });
+  attempt: number,
+  baseCtx: LogContext,
+): Promise<AttemptOutcome> {
+  const aborter = new AbortController();
+  const timer = setTimeout(() => aborter.abort(), REQUEST_TIMEOUT_MS);
+  const reqStart = Date.now();
 
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => "(no body)");
-    throw new Error(`OpenRouter HTTP ${response.status}: ${errorText}`);
+  try {
+    const response = await fetch(OPENROUTER_API_URL, {
+      method: "POST",
+      signal: aborter.signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer":
+          process.env.NEXT_PUBLIC_APP_URL ?? "https://localhost:3000",
+        "X-Title": "OCR-CRM eBay Auto-Lister",
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: `TITLE: ${title}` },
+        ],
+        max_tokens: 2048,
+        temperature: 0.4,
+      }),
+    });
+
+    const requestId = response.headers.get("x-request-id") ?? undefined;
+    const reqDurMs = Date.now() - reqStart;
+
+    if (!response.ok) {
+      const bodyText = await response.text().catch(() => "(no body)");
+      const errCtx: LogContext = {
+        ...baseCtx,
+        attempt,
+        status_code: response.status,
+        request_id: requestId,
+        dur_ms: reqDurMs,
+        body_preview: bodyText.slice(0, 500),
+      };
+
+      if (isRetryableStatus(response.status)) {
+        log.warn(`OpenRouter ${response.status} — will retry`, errCtx);
+        return {
+          kind: "retry",
+          status: response.status,
+          requestId,
+          err: `HTTP ${response.status}`,
+        };
+      }
+
+      log.error(
+        "OpenRouter returned non-retryable error status",
+        errCtx,
+      );
+      return {
+        kind: "fatal",
+        status: response.status,
+        requestId,
+        err: `HTTP ${response.status}: ${bodyText.slice(0, 300)}`,
+      };
+    }
+
+    const data = (await response.json()) as OpenRouterResponse;
+
+    if (data.error?.message) {
+      log.error("OpenRouter returned error in response body", {
+        ...baseCtx,
+        attempt,
+        status_code: response.status,
+        request_id: requestId,
+        response_id: data.id,
+        api_error_code: data.error.code,
+        api_error_type: data.error.type,
+        err: data.error.message,
+      });
+      return {
+        kind: "fatal",
+        status: response.status,
+        requestId,
+        responseId: data.id,
+        err: `OpenRouter API error: ${data.error.message}`,
+      };
+    }
+
+    const choice = data.choices?.[0];
+    const rawContent = choice?.message?.content?.trim();
+    const finishReason = choice?.finish_reason;
+
+    if (!rawContent) {
+      log.error("OpenRouter returned empty content", {
+        ...baseCtx,
+        attempt,
+        status_code: response.status,
+        request_id: requestId,
+        response_id: data.id,
+        finish_reason: finishReason,
+      });
+      return {
+        kind: "fatal",
+        status: response.status,
+        requestId,
+        responseId: data.id,
+        finishReason,
+        err: "empty content from OpenRouter",
+      };
+    }
+
+    if (looksLikeRefusal(rawContent)) {
+      log.warn(
+        "OpenRouter returned refusal-shaped content — treating as failure",
+        {
+          ...baseCtx,
+          attempt,
+          status_code: response.status,
+          request_id: requestId,
+          response_id: data.id,
+          finish_reason: finishReason,
+          content_preview: rawContent.slice(0, 200),
+        },
+      );
+      return {
+        kind: "fatal",
+        status: response.status,
+        requestId,
+        responseId: data.id,
+        finishReason,
+        err: "refusal-shaped content",
+      };
+    }
+
+    const cleaned = sanitize(rawContent);
+    log.info("OpenRouter call succeeded", {
+      ...baseCtx,
+      attempt,
+      status_code: response.status,
+      request_id: requestId,
+      response_id: data.id,
+      finish_reason: finishReason,
+      prompt_tokens: data.usage?.prompt_tokens,
+      completion_tokens: data.usage?.completion_tokens,
+      total_tokens: data.usage?.total_tokens,
+      chars: cleaned.length,
+      dur_ms: reqDurMs,
+    });
+
+    return {
+      kind: "ok",
+      content: cleaned,
+      finishReason,
+      responseId: data.id,
+      requestId,
+      status: response.status,
+      usage: data.usage,
+    };
+  } catch (err) {
+    const reqDurMs = Date.now() - reqStart;
+    const isAbort = err instanceof Error && err.name === "AbortError";
+    const errCtx: LogContext = { ...baseCtx, attempt, dur_ms: reqDurMs, err };
+    if (isAbort) {
+      log.error(
+        `OpenRouter request timed out after ${REQUEST_TIMEOUT_MS}ms`,
+        errCtx,
+      );
+      return { kind: "retry", err: `timeout after ${REQUEST_TIMEOUT_MS}ms` };
+    }
+    log.error("OpenRouter request failed with network error", errCtx);
+    return {
+      kind: "retry",
+      err: err instanceof Error ? err.message : String(err),
+    };
+  } finally {
+    clearTimeout(timer);
   }
-
-  const data = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-    error?: { message?: string };
-  };
-
-  if (data.error?.message) {
-    throw new Error(`OpenRouter API error: ${data.error.message}`);
-  }
-
-  const content = data.choices?.[0]?.message?.content?.trim();
-  if (!content) {
-    throw new Error("OpenRouter returned empty content");
-  }
-
-  return content;
 }
 
 /**
  * Generate an eBay listing description using OpenRouter AI.
  *
- * Returns { description, usedFallback } so callers can log a meaningful status:
- * - usedFallback=false  → AI-generated description
- * - usedFallback=true   → API key missing/invalid or all retries exhausted;
- *                         description is a safe placeholder
+ * The caller should branch on `result.source`:
+ *   - 'ai'       → use as-is
+ *   - 'fallback' → AI failed; you got a safe placeholder, surface a warning
  */
-export async function generateListingDescription(title: string): Promise<{
-  description: string;
-  usedFallback: boolean;
-  error?: string;
-}> {
+export async function generateListingDescription(
+  title: string,
+  ctx: GenerateDescriptionContext = {},
+): Promise<GenerateDescriptionResult> {
+  const started = Date.now();
   const apiKey = process.env.OPENROUTER_API_KEY;
   const model = process.env.OPENROUTER_MODEL ?? DEFAULT_MODEL;
+  const baseCtx: LogContext = {
+    scope: "ai.openrouter",
+    model,
+    title_len: title?.length ?? 0,
+    search_id: ctx.searchId ?? null,
+    batch_id: ctx.batchId ?? null,
+    sku: ctx.sku ?? null,
+    user_id: ctx.userId ?? null,
+  };
 
-  // Guard: key not set at all, or is the placeholder we ship by default
   if (!apiKey || apiKey.startsWith("sk-or-v1-your-key")) {
-    const msg = "OPENROUTER_API_KEY is not configured — set it in Railway/env";
-    console.warn(`[generate-description] ⚠️  ${msg}`);
+    const msg = "OPENROUTER_API_KEY missing or placeholder";
+    log.warn(msg + " — returning fallback description", baseCtx);
     return {
       description: fallbackDescription(title),
+      source: "fallback",
       usedFallback: true,
+      model,
+      durMs: Date.now() - started,
+      attempts: 0,
       error: msg,
     };
   }
 
-  let lastError = "";
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      console.log(
-        `[generate-description] Attempt ${attempt}/${MAX_RETRIES} — title="${title.slice(0, 60)}..." model=${model}`,
-      );
+  if (!title || title.trim().length === 0) {
+    log.error("Empty title supplied — refusing to call OpenRouter", baseCtx);
+    return {
+      description: fallbackDescription(title),
+      source: "fallback",
+      usedFallback: true,
+      model,
+      durMs: Date.now() - started,
+      attempts: 0,
+      error: "empty title",
+    };
+  }
 
-      const content = await callOpenRouter(title, apiKey, model);
+  log.info("Generating description via OpenRouter", baseCtx);
 
-      console.log(
-        `[generate-description] ✅ Success on attempt ${attempt} — ${content.length} chars`,
-      );
-      return { description: content, usedFallback: false };
-    } catch (err) {
-      lastError = err instanceof Error ? err.message : String(err);
-      console.error(
-        `[generate-description] ❌ Attempt ${attempt}/${MAX_RETRIES} failed: ${lastError}`,
-      );
+  let lastErr: string | undefined;
+  let lastStatus: number | undefined;
+  let lastRequestId: string | undefined;
 
-      if (attempt < MAX_RETRIES) {
-        const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1); // 1s, 2s, 4s
-        console.log(`[generate-description] Retrying in ${delay}ms…`);
-        await sleep(delay);
-      }
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const outcome = await callOpenRouter(title, apiKey, model, attempt, baseCtx);
+    lastErr = outcome.err ?? lastErr;
+    lastStatus = outcome.status ?? lastStatus;
+    lastRequestId = outcome.requestId ?? lastRequestId;
+
+    if (outcome.kind === "ok" && outcome.content) {
+      const durMs = Date.now() - started;
+      log.info("Description generated", {
+        ...baseCtx,
+        attempts: attempt,
+        dur_ms: durMs,
+        request_id: outcome.requestId,
+        response_id: outcome.responseId,
+        chars: outcome.content.length,
+      });
+      return {
+        description: outcome.content,
+        source: "ai",
+        usedFallback: false,
+        model,
+        requestId: outcome.requestId,
+        responseId: outcome.responseId,
+        durMs,
+        attempts: attempt,
+        promptTokens: outcome.usage?.prompt_tokens,
+        completionTokens: outcome.usage?.completion_tokens,
+        totalTokens: outcome.usage?.total_tokens,
+        lastStatus: outcome.status,
+        finishReason: outcome.finishReason,
+      };
+    }
+
+    if (outcome.kind === "fatal") break;
+
+    if (attempt < MAX_ATTEMPTS) {
+      const wait = backoffMs(attempt);
+      log.warn(`Backing off ${wait}ms before retrying OpenRouter`, {
+        ...baseCtx,
+        attempt,
+        next_attempt: attempt + 1,
+      });
+      await sleep(wait);
     }
   }
 
-  // All retries exhausted — return fallback but flag it so the caller can log a 'fail' step
-  console.error(
-    `[generate-description] ❌ All ${MAX_RETRIES} attempts failed. Last error: ${lastError}. Using fallback description.`,
-  );
+  const durMs = Date.now() - started;
+  log.error("All OpenRouter attempts exhausted — using fallback description", {
+    ...baseCtx,
+    attempts: MAX_ATTEMPTS,
+    dur_ms: durMs,
+    status_code: lastStatus,
+    request_id: lastRequestId,
+    err: lastErr,
+  });
+
   return {
     description: fallbackDescription(title),
+    source: "fallback",
     usedFallback: true,
-    error: lastError,
+    model,
+    requestId: lastRequestId,
+    durMs,
+    attempts: MAX_ATTEMPTS,
+    lastStatus,
+    error: lastErr ?? "unknown error",
   };
-}
-
-function fallbackDescription(title: string): string {
-  return (
-    `${title} — Used OEM auto part in good condition. ` +
-    `Please verify fitment by OEM part number or VIN before ordering. ` +
-    `Ships within 1 business day. 90-day warranty & easy returns. Expedited shipping available.`
-  );
 }
