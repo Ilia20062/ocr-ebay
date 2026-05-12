@@ -2,6 +2,7 @@ import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { createAndPublishListing } from './inventory'
 import { getBusinessPolicies } from './policies'
 import { enqueueRetry } from '@/lib/retry'
+import { generateListingDescription } from '@/lib/ai/generate-description'
 import type { EbayItemSummary } from '@/types/ebay'
 
 interface AutoListParams {
@@ -54,6 +55,10 @@ export async function autoCreateListing({ userId, searchId, bestMatch, imageUrls
   log(steps, 'Parse Match', 'ok', `title="${title}", price=${price} ${currency}, condition=${condition}, category=${categoryId || 'NONE'}, sku=${sku}`)
   log(steps, 'Image URLs', 'ok', `${imageUrls.length} image(s) attached to listing`)
 
+  // Step 1b: Generate AI-powered eBay description via OpenRouter
+  const description = await generateListingDescription(title)
+  log(steps, 'Generate Description', 'ok', `AI description generated (${description.length} chars)`)
+
   if (!categoryId) {
     log(steps, 'Parse Match', 'fail', 'No categoryId found on the matched product. eBay requires a category to list.')
     return { success: false, error: 'No category found on matched product', steps }
@@ -69,7 +74,7 @@ export async function autoCreateListing({ userId, searchId, bestMatch, imageUrls
     search_id: searchId,
     user_id: userId,
     title,
-    description: `${title} - Listed automatically via OCR-CRM`,
+    description,
     price,
     currency,
     quantity: 1,
@@ -106,7 +111,7 @@ export async function autoCreateListing({ userId, searchId, bestMatch, imageUrls
       userId,
       sku,
       title,
-      description: `${title} - Listed automatically via OCR-CRM`,
+      description,
       price,
       currency,
       quantity: 1,
