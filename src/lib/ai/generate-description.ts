@@ -12,7 +12,7 @@
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 // A well-known free model that exists on OpenRouter (override via OPENROUTER_MODEL env var)
-const DEFAULT_MODEL = "meta-llama/llama-3.1-8b-instruct:free";
+const DEFAULT_MODEL = "openai/gpt-oss-120b:free";
 
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000; // 1s, 2s, 4s
@@ -137,13 +137,18 @@ function sleep(ms: number) {
  * Try ONE call to the OpenRouter API.
  * Throws a descriptive error if anything goes wrong.
  */
-async function callOpenRouter(title: string, apiKey: string, model: string): Promise<string> {
+async function callOpenRouter(
+  title: string,
+  apiKey: string,
+  model: string,
+): Promise<string> {
   const response = await fetch(OPENROUTER_API_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
-      "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL ?? "https://localhost:3000",
+      "HTTP-Referer":
+        process.env.NEXT_PUBLIC_APP_URL ?? "https://localhost:3000",
       "X-Title": "OCR-CRM eBay Auto-Lister",
     },
     body: JSON.stringify({
@@ -199,7 +204,11 @@ export async function generateListingDescription(title: string): Promise<{
   if (!apiKey || apiKey.startsWith("sk-or-v1-your-key")) {
     const msg = "OPENROUTER_API_KEY is not configured — set it in Railway/env";
     console.warn(`[generate-description] ⚠️  ${msg}`);
-    return { description: fallbackDescription(title), usedFallback: true, error: msg };
+    return {
+      description: fallbackDescription(title),
+      usedFallback: true,
+      error: msg,
+    };
   }
 
   let lastError = "";
