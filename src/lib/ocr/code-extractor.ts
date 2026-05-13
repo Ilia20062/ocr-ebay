@@ -74,6 +74,52 @@ export function extractCandidates(text: string): OcrCandidate[] {
   return candidates.sort((a, b) => b.confidence - a.confidence)
 }
 
+/**
+ * True for OCR scraps that pass the digit guard but are never real part
+ * numbers: pure short numbers (years, prices, lot counts), repeated-separator
+ * artefacts ("5..5", "A--7"), digit-only versions/times that slip past the
+ * watermark patterns ("7.47", "21.20"), and standalone single-segment
+ * "fractions" with very short parts ("27/4", "5-28", "J-01").
+ *
+ * Hard reject — these never become candidates.
+ */
+function isObviousScrap(code: string): boolean {
+  const c = code
+
+  // Pure 1-4 digit numbers — years, prices, lot indexes, page numbers.
+  if (/^\d{1,4}$/.test(c)) return true
+
+  // Pure digit + dot strings ("7.47", "21.20", "1.2.3") — versions, prices,
+  // mis-parsed times. The watermark pattern catches some of these but not all
+  // (anything that doesn't match the explicit version regex still leaked).
+  if (/^[\d.]+$/.test(c) && /\./.test(c)) return true
+
+  // Pure digit + colon ("21:20"), already caught by isWatermark, defensive here.
+  if (/^[\d:]+$/.test(c) && /:/.test(c)) return true
+
+  // Consecutive separators — OCR doubling the same character. Real PNs don't
+  // have "..", "--", or "//".
+  if (/\.\.|--|\/\//.test(c)) return true
+
+  // Standalone single-segment "fractions" or measurements:
+  //   "27/4", "5-28", "J-01", "A-7"
+  // Match: ≤6 chars, exactly one dash/slash, at least one numeric-only segment
+  // ≤2 chars long. Real PNs either are longer or have multiple separators.
+  if (c.length <= 6) {
+    const m = c.match(/^([A-Z0-9]+)[\-\/]([A-Z0-9]+)$/)
+    if (m) {
+      const [, a, b] = m
+      const numericOnly = (s: string) => /^\d+$/.test(s)
+      // both pure numeric (a fraction) → reject
+      if (numericOnly(a) && numericOnly(b)) return true
+      // one side ≤2 chars and the other pure-numeric → reject ("J-01", "A-7")
+      if ((a.length <= 2 && numericOnly(b)) || (b.length <= 2 && numericOnly(a))) return true
+    }
+  }
+
+  return false
+}
+
 function scoreCandidate(code: string): number {
   const hasDigit = /\d/.test(code)
   const hasLetter = /[A-Z]/.test(code)
@@ -87,16 +133,30 @@ function scoreCandidate(code: string): number {
   // version strings). These pass the digit guard but are never real part numbers.
   if (isWatermark(code)) return 0
 
+  // Reject obvious OCR scraps that have nothing in common with real OEM PNs.
+  if (isObviousScrap(code)) return 0
+
+  // Hard minimum length: real OEM part numbers are 6+ chars in this domain.
+  // 4-5 char alphanumerics are overwhelmingly OCR noise (brand letters, partial
+  // reads, edge artefacts). A reviewer can still type one manually if a rare
+  // 4-5 char real code appears.
+  if (length < 6) return 0
+
   // Base: 0.4 — heuristic score intentionally stays below auto-approve threshold (0.90)
   // so OCR provider word-level confidence is required to push it over
   let score = 0.4
 
   if (hasDigit && hasLetter) score += 0.2
-  if (length >= 6 && length <= 20) score += 0.1
+
+  // Length bias: real OEM PNs cluster at 7-15 chars.
+  if (length >= 8 && length <= 16) score += 0.2       // sweet spot
+  else if (length >= 6 && length < 8) score += 0.1    // plausible
+  else if (length > 20) score -= 0.1                  // OCR likely glued two strings
+
   if (/[-\/]/.test(code)) score += 0.05
   if (/\+/.test(code)) score += 0.05
 
-  return Math.min(score, 0.75)
+  return Math.max(0, Math.min(score, 0.85))
 }
 
 export function selectTopCandidate(

@@ -78,7 +78,7 @@ The product is an OCR-driven eBay relisting CRM. Workflow:
 - **Auth/route guards:** `src/lib/middleware.ts` exports `withAuth(handler)` (Supabase session required, injects `userId` and resolved `params`) and `withCron(handler)` (Bearer `CRON_SECRET`). Use these — do NOT call `supabase.auth.getUser()` manually inside route handlers.
 - **Supabase clients:** `lib/supabase/server.ts` for SSR cookies, `lib/supabase/admin.ts` (service-role) for background work and writes from API routes, `lib/supabase/client.ts` for the browser. Service-role client bypasses RLS — ownership must be enforced in code (`.eq('user_id', userId)`).
 - **Logging:** `src/lib/log.ts` — use `withContext({ scope, user_id, session_id, batch_id, … })` at the top of any handler/background task so structured fields flow into every line. Errors include stack traces automatically. Prefer this over `console.log`.
-- **Validation:** Zod schemas live in `src/lib/validators/`. Per-batch image cap = 24; per-session cap = 300; max 10 MB per file (`MAX_IMAGES_PER_BATCH`, `MAX_IMAGES_PER_SESSION`).
+- **Validation:** Zod schemas live in `src/lib/validators/`. Per-file cap is 10 MB (`MAX_FILE_SIZE_BYTES`). Per-batch and per-session image-count limits were removed by request — uploads of any count are accepted, the only practical bound is OCR throughput.
 - **Path alias:** `@/*` → `./src/*` (`tsconfig.json`).
 
 ### Routing layout (App Router)

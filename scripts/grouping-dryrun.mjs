@@ -115,6 +115,23 @@ function isWatermark(code) {
   return false
 }
 
+function isObviousScrap(c) {
+  if (/^\d{1,4}$/.test(c)) return true
+  if (/^[\d.]+$/.test(c) && /\./.test(c)) return true
+  if (/^[\d:]+$/.test(c) && /:/.test(c)) return true
+  if (/\.\.|--|\/\//.test(c)) return true
+  if (c.length <= 6) {
+    const m = c.match(/^([A-Z0-9]+)[\-/]([A-Z0-9]+)$/)
+    if (m) {
+      const [, a, b] = m
+      const num = s => /^\d+$/.test(s)
+      if (num(a) && num(b)) return true
+      if ((a.length <= 2 && num(b)) || (b.length <= 2 && num(a))) return true
+    }
+  }
+  return false
+}
+
 function extractCandidates(text) {
   if (!text) return []
   const norm = text.toUpperCase().replace(/[^\x20-\x7E]/g, ' ').replace(/\s+/g, ' ')
@@ -126,12 +143,18 @@ function extractCandidates(text) {
     seen.add(code)
     if (!/\d/.test(code)) continue
     if (isWatermark(code)) continue
+    if (isObviousScrap(code)) continue
+    if (code.length < 6) continue
+    const hasLetter = /[A-Z]/.test(code)
+    const length = code.length
     let score = 0.4
-    if (/[A-Z]/.test(code)) score += 0.2
-    if (code.length >= 6 && code.length <= 20) score += 0.1
+    if (hasLetter) score += 0.2
+    if (length >= 8 && length <= 16) score += 0.2
+    else if (length >= 6 && length < 8) score += 0.1
+    else if (length > 20) score -= 0.1
     if (/[-/]/.test(code)) score += 0.05
     if (/\+/.test(code)) score += 0.05
-    out.push({ text: code, confidence: Math.min(score, 0.75) })
+    out.push({ text: code, confidence: Math.max(0, Math.min(score, 0.85)) })
   }
   return out.sort((a, b) => b.confidence - a.confidence)
 }

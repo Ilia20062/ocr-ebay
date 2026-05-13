@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { withAuth, apiError } from '@/lib/middleware'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
-import { sessionPresignSchema, MAX_IMAGES_PER_SESSION } from '@/lib/validators/upload'
+import { sessionPresignSchema } from '@/lib/validators/upload'
 import { parseCapturedAt } from '@/lib/grouping/timestamp'
 import { withContext } from '@/lib/log'
 
@@ -43,16 +43,7 @@ export const POST = withAuth(async (req, userId, params) => {
     return apiError(`Session is not accepting uploads (status: ${session.status})`, 409)
   }
 
-  // Enforce per-session image cap.
-  const { count: existingCount } = await db
-    .from('images')
-    .select('id', { count: 'exact', head: true })
-    .eq('upload_session_id', sessionId)
-
-  if ((existingCount ?? 0) >= MAX_IMAGES_PER_SESSION) {
-    log.warn('session full', { existing: existingCount, max: MAX_IMAGES_PER_SESSION })
-    return apiError(`Session is at the ${MAX_IMAGES_PER_SESSION}-image limit`, 422, 'SESSION_FULL')
-  }
+  // (image-count cap removed — uploads have no per-session limit)
 
   const safeName = filename.replace(/[^a-zA-Z0-9.\-_]/g, '_')
   const storagePath = `${userId}/session-${sessionId}/${crypto.randomUUID()}-${safeName}`

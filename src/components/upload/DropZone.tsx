@@ -6,14 +6,12 @@ import { ImagePlus } from 'lucide-react'
 interface Props {
   onFiles: (files: File[]) => void
   disabled?: boolean
-  maxFiles?: number
 }
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/tiff']
 const MAX_SIZE_MB = 10
-const DEFAULT_MAX_FILES = 300
 
-export default function DropZone({ onFiles, disabled, maxFiles = DEFAULT_MAX_FILES }: Props) {
+export default function DropZone({ onFiles, disabled }: Props) {
   const [dragging, setDragging] = useState(false)
   const [error, setError] = useState('')
 
@@ -31,12 +29,8 @@ export default function DropZone({ onFiles, disabled, maxFiles = DEFAULT_MAX_FIL
       }
       valid.push(f)
     }
-    if (valid.length > maxFiles) {
-      setError(`Maximum ${maxFiles} images per upload`)
-      return valid.slice(0, maxFiles)
-    }
     return valid
-  }, [maxFiles])
+  }, [])
 
   function onDrop(e: DragEvent) {
     e.preventDefault()
@@ -77,7 +71,7 @@ export default function DropZone({ onFiles, disabled, maxFiles = DEFAULT_MAX_FIL
           Drop <strong>every photo from your job lot</strong> here, or <span className="text-blue-600">browse</span>
         </p>
         <p className="text-xs text-gray-400 mt-1">
-          JPEG, PNG, WEBP, TIFF — up to 10MB each, max {maxFiles} images per upload
+          JPEG, PNG, WEBP, TIFF — up to 10MB each
         </p>
       </label>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}

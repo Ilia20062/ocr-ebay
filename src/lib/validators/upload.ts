@@ -1,7 +1,8 @@
 import { z } from 'zod'
 
-export const MAX_IMAGES_PER_BATCH = 24
-export const MAX_IMAGES_PER_SESSION = 300
+// Image-count caps removed by request — there is no per-batch or per-session
+// limit. Per-file size cap below remains (defensive bound on a single upload).
+export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
 
 export const presignSchema = z.object({
   batch_id: z.string().uuid(),
