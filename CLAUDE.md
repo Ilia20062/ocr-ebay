@@ -59,6 +59,15 @@ The product is an OCR-driven eBay relisting CRM. Workflow:
 - `client.ts` injects fresh tokens + `X-EBAY-C-MARKETPLACE-ID` on every request and retries 429s with `Retry-After`.
 - `policies.ts` auto-opts-in to `SELLING_POLICY_MANAGEMENT` on first publish.
 - `auto-list.ts` has two distinct entry points: `autoCreateDraftListing` (does NOT contact eBay — just persists a `status='draft'` row) and `publishListing` (the Sell-API push, invoked only by an explicit user click). Image URLs are re-signed at publish time because signed URLs from draft creation expire.
+- `validate-candidates.ts` re-ranks OCR candidates by eBay Browse-API match count; the session-process pipeline calls it after `resolveGroupCode` so that a candidate with more eBay hits can be promoted over the OCR winner. Silent no-op when the user has no eBay connection.
+
+**OCR providers** (`src/lib/ocr/`)
+- `pool.ts:recognizeWithFallback` runs a fixed pipeline per image:
+  1. **Barcode pre-pass** (`barcode.ts`, `@zxing/library` + `sharp`) — decodes EAN/UPC/Code128/QR/DataMatrix. If a barcode is present, it wins with confidence 1.0 and we skip OCR entirely.
+  2. **Primary OCR** — PaddleOCR sidecar if `PADDLE_OCR_URL` is set (`paddle.ts` posts the buffer to the FastAPI service in `paddle-ocr/`), otherwise in-process Tesseract.
+  3. **Google Vision fallback** if `GOOGLE_VISION_API_KEY` is set and primary returned no/weak candidates.
+- The candidate extractor (`code-extractor.ts:isWatermark`) rejects warranty stamps (`90DAYS`), dates (`11/06/15`), times, version strings, and a literal blacklist of dataset-specific scraps. Keep `scripts/grouping-dryrun.mjs` in sync if you change the patterns.
+- PaddleOCR sidecar is a separate deployable in `paddle-ocr/` (Dockerfile + Railway config). See `paddle-ocr/README.md` for deploy steps.
 
 **Retry queue** (`src/lib/retry.ts` + `src/app/api/cron/retry/route.ts`)
 - Exponential backoff `[5, 15, 60]` minutes, max attempts before `exhausted`.
@@ -92,6 +101,6 @@ Status enums are in `src/types/database.ts` — keep these in sync with migratio
 
 ### Deployment
 
-- **Vercel** is primary (`vercel.json` defines the two crons). `NEXT_PUBLIC_APP_URL`, `EBAY_CLIENT_ID/SECRET/RUNAME`, `EBAY_ENVIRONMENT` (`sandbox|production`), `EBAY_MARKETPLACE_ID`, `ENCRYPTION_KEY` (64 hex chars), `CRON_SECRET`, `OPENROUTER_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` are required at minimum.
+- **Vercel** is primary (`vercel.json` defines the two crons). `NEXT_PUBLIC_APP_URL`, `EBAY_CLIENT_ID/SECRET/RUNAME`, `EBAY_ENVIRONMENT` (`sandbox|production`), `EBAY_MARKETPLACE_ID`, `ENCRYPTION_KEY` (64 hex chars), `CRON_SECRET`, `OPENROUTER_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` are required at minimum. Optional: `PADDLE_OCR_URL` + `PADDLE_OCR_TOKEN` (PaddleOCR sidecar), `GOOGLE_VISION_API_KEY` (Vision fallback).
 - **Railway** config exists (`railway.json`) as an alternative — uses `npm run start` with `PORT` injected.
 - `next.config.ts` whitelists `*.supabase.co/storage/v1/object/sign/**` for `next/image`.

@@ -8,5 +8,5 @@ export interface OcrProviderResult {
   extractedText: string
   candidates: OcrCandidate[]
   topCandidate: OcrCandidate | null
-  provider: 'google_vision' | 'tesseract'
+  provider: 'google_vision' | 'tesseract' | 'barcode' | 'paddle'
 }

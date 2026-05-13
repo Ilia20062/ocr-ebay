@@ -5,6 +5,8 @@ import {
   type TesseractWorker,
 } from './tesseract'
 import { runGoogleVisionOcr } from './google-vision'
+import { scanBarcode } from './barcode'
+import { runPaddleOcr, isPaddleEnabled } from './paddle'
 import { log } from '@/lib/log'
 import type { OcrProviderResult } from '@/types/ocr'
 
@@ -125,28 +127,72 @@ export async function recognizeWithFallback(
   mimeType?: string,
 ): Promise<OcrProviderResult> {
   const visionEnabled = !!process.env.GOOGLE_VISION_API_KEY
+  const paddleEnabled = isPaddleEnabled()
 
-  // 1) Tesseract attempt
-  let tessResult: OcrProviderResult | null = null
-  let tessErr: unknown = null
-  const tessStart = Date.now()
+  // 0) Barcode pre-pass — if the image has a printed barcode/QR, decode wins.
+  //    Pure-1D and QR codes return their exact payload with effectively 100%
+  //    confidence, beating any OCR engine. Costs ~50-150ms per image.
   try {
-    tessResult = await recognizeBuffer(worker, buffer, mimeType)
+    const hit = await scanBarcode(buffer)
+    if (hit) {
+      const result: OcrProviderResult = {
+        rawResponse: { format: hit.format, code: hit.code },
+        extractedText: hit.code,
+        candidates: [{ text: hit.code, confidence: 1 }],
+        topCandidate: { text: hit.code, confidence: 1 },
+        provider: 'barcode',
+      }
+      return result
+    }
   } catch (err) {
-    tessErr = err
-    log.warn('Tesseract attempt failed', {
+    // scanBarcode is supposed to never throw, but be defensive.
+    log.debug('barcode pre-pass threw', { scope: 'ocr.recognize', err })
+  }
+
+  // 1) Primary OCR.
+  //    - If PaddleOCR is configured (PADDLE_OCR_URL env var → sidecar), use it.
+  //      It's significantly more accurate on molded/embossed labels than
+  //      Tesseract.
+  //    - Otherwise fall back to in-process Tesseract.
+  let primaryResult: OcrProviderResult | null = null
+  let primaryErr: unknown = null
+  const primaryStart = Date.now()
+  const primaryName = paddleEnabled ? 'paddle' : 'tesseract'
+
+  try {
+    if (paddleEnabled) {
+      primaryResult = await runPaddleOcr(buffer, mimeType)
+    } else {
+      primaryResult = await recognizeBuffer(worker, buffer, mimeType)
+    }
+  } catch (err) {
+    primaryErr = err
+    log.warn(`${primaryName} attempt failed`, {
       scope: 'ocr.recognize',
-      dur_ms: Date.now() - tessStart,
+      provider: primaryName,
+      dur_ms: Date.now() - primaryStart,
       err,
     })
+    // If Paddle failed, try Tesseract before giving up — the in-process worker
+    // is always available and gives us a non-empty result on most images.
+    if (paddleEnabled) {
+      try {
+        primaryResult = await recognizeBuffer(worker, buffer, mimeType)
+      } catch (tessErr) {
+        log.warn('Tesseract failed after Paddle failure', {
+          scope: 'ocr.recognize',
+          err: tessErr,
+        })
+      }
+    }
   }
 
-  // High-confidence Tesseract hit → return immediately, skip Vision call.
-  if (tessResult?.topCandidate && tessResult.topCandidate.confidence >= 0.55) {
-    return tessResult
+  // High-confidence primary hit → return immediately, skip Vision call.
+  if (primaryResult?.topCandidate && primaryResult.topCandidate.confidence >= 0.55) {
+    return primaryResult
   }
 
-  // 2) Vision fallback — covers Tesseract returning empty, no candidates, or
+  // 2) Vision fallback — covers primary returning empty, no candidates, or
   //    weak candidates the user is unlikely to be happy with.
   if (visionEnabled) {
     const visionStart = Date.now()
@@ -164,11 +210,11 @@ export async function recognizeWithFallback(
       })
 
       // Prefer Vision when it produced ANY candidate or substantially more text.
-      const tessCands = tessResult?.candidates.length ?? 0
-      const tessTextLen = tessResult?.extractedText.length ?? 0
+      const primCands = primaryResult?.candidates.length ?? 0
+      const primTextLen = primaryResult?.extractedText.length ?? 0
       if (
-        visionResult.candidates.length > tessCands ||
-        (visionResult.candidates.length === tessCands && visionResult.extractedText.length > tessTextLen)
+        visionResult.candidates.length > primCands ||
+        (visionResult.candidates.length === primCands && visionResult.extractedText.length > primTextLen)
       ) {
         return visionResult
       }
@@ -181,9 +227,9 @@ export async function recognizeWithFallback(
     }
   }
 
-  if (tessResult) return tessResult
+  if (primaryResult) return primaryResult
 
   throw new Error(
-    `All OCR providers failed: ${tessErr instanceof Error ? tessErr.message : String(tessErr)}`,
+    `All OCR providers failed: ${primaryErr instanceof Error ? primaryErr.message : String(primaryErr)}`,
   )
 }
