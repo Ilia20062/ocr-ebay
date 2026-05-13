@@ -3,6 +3,11 @@ import { withAuth, apiError } from '@/lib/middleware'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { TesseractPool, recognizeWithFallback } from '@/lib/ocr/pool'
 import { resolveGroupCode } from '@/lib/ocr/group-resolver'
+import {
+  userHasEbayConnection,
+  validateCandidatesWithEbay,
+  type CandidateCache,
+} from '@/lib/ebay/validate-candidates'
 import { enqueueRetry } from '@/lib/retry'
 import { clusterByTime } from '@/lib/grouping/timeCluster'
 import { pickLabelCandidate, pickLabelCandidates } from '@/lib/grouping/labelPicker'
@@ -127,6 +132,13 @@ async function processSessionInBackground(
       .update({ status: 'processing', group_count: clusters.length })
       .eq('id', sessionId)
 
+    // Pre-check eBay once per session — avoids hitting the DB/token-refresh
+    // path on every cluster when the user hasn't connected yet. The validator
+    // re-checks per call too, but this lets us log the mode up-front.
+    const ebayConnected = await userHasEbayConnection(userId)
+    const candidateCache: CandidateCache = new Map()
+    log.info('candidate validation mode', { ebay_connected: ebayConnected })
+
     const tPool = Date.now()
     pool = new TesseractPool(Math.min(OCR_CONCURRENCY, images.length))
     try {
@@ -239,7 +251,32 @@ async function processSessionInBackground(
         await db.from('images').update({ is_label_candidate: true }).eq('id', labelImg.id)
       }
 
-      const resolved = resolveGroupCode({ ocrResults: ocrRows })
+      const initialResolved = resolveGroupCode({ ocrResults: ocrRows })
+
+      // eBay-validate the resolver output when connected. This re-ranks
+      // candidates by Browse-API match count and swaps the winner if a
+      // strict majority of hits points to an alternative. Silent no-op when
+      // eBay isn't connected — the OCR winner stands.
+      let resolved = initialResolved
+      let validationSwapped = false
+      if (ebayConnected && initialResolved.winningCode) {
+        try {
+          const outcome = await validateCandidatesWithEbay(userId, initialResolved, {
+            cache: candidateCache,
+          })
+          resolved = outcome.reranked
+          validationSwapped = outcome.swapped
+        } catch (err) {
+          // Validator catches per-candidate errors internally; outer catch is
+          // only for a top-level failure (token-refresh blowup, etc).
+          log.warn('candidate validation failed — falling back to OCR winner', {
+            cluster_idx: cIdx,
+            batch_id: batch.id,
+            err,
+          })
+        }
+      }
+
       if (resolved.winningCode) totalCodesFound++
       else totalNoCode++
 
@@ -260,6 +297,9 @@ async function processSessionInBackground(
         ocr_rows: ocrRows.length,
         ocr_skipped: cluster.length - ocrRows.length,
         winning_code: resolved.winningCode,
+        ebay_validated: ebayConnected,
+        ebay_swapped: validationSwapped,
+        original_code: validationSwapped ? initialResolved.winningCode : undefined,
         had_consensus: resolved.hadConsensus,
         label_id: labelImg?.id ?? null,
         dur_ms: Date.now() - tBatch,

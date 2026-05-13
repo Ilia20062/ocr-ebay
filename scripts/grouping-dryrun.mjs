@@ -94,6 +94,27 @@ function clusterByTime(images, gapMs, jpgRetakeMs) {
 // ── code extraction (mirrors src/lib/ocr/code-extractor.ts) ──────────────────
 const PART_RE = /(?<![A-Z0-9])([A-Z0-9][A-Z0-9\-/.+]{2,23}[A-Z0-9])(?![A-Z0-9])/g
 
+// Keep in sync with src/lib/ocr/code-extractor.ts:isWatermark
+const WATERMARK_PATTERNS = [
+  /^O?\d{1,3}\s*DAYS?$/,
+  /^\d{1,3}\s*YEARS?$/,
+  /^\d{1,2}\s*MONTHS?$/,
+  /^\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}$/,
+  /^\d{1,2}:\d{2}(?::\d{2})?$/,
+  /^V?\d{1,3}\.\d{1,3}(?:\.\d{1,3})?$/,
+]
+const WATERMARK_LITERALS = new Set([
+  'PE-94','OFI2','90DAY','90DAYS','O90DAYS','70DAYS','60DAYS','30DAYS',
+  'MADEIN','MADE-IN','ISO9001','ISO-9001','CE2024','CE2025','CE2026',
+])
+function isWatermark(code) {
+  if (!code) return false
+  const c = code.toUpperCase().trim()
+  if (WATERMARK_LITERALS.has(c)) return true
+  for (const re of WATERMARK_PATTERNS) if (re.test(c)) return true
+  return false
+}
+
 function extractCandidates(text) {
   if (!text) return []
   const norm = text.toUpperCase().replace(/[^\x20-\x7E]/g, ' ').replace(/\s+/g, ' ')
@@ -104,6 +125,7 @@ function extractCandidates(text) {
     if (seen.has(code)) continue
     seen.add(code)
     if (!/\d/.test(code)) continue
+    if (isWatermark(code)) continue
     let score = 0.4
     if (/[A-Z]/.test(code)) score += 0.2
     if (code.length >= 6 && code.length <= 20) score += 0.1
