@@ -91,28 +91,42 @@ export default function UploadSessionProvider({ children }: { children: React.Re
     setUploaded(0)
     setGroupCount(0)
     setError(null)
-    pollingRef.current = pollingRef.current && { ...pollingRef.current, cancelled: true }
-    uploadingFilesRef.current = uploadingFilesRef.current && { ...uploadingFilesRef.current, cancelled: true }
+    // Mutate the handle objects in place — the running loops read
+    // `handle.cancelled` from the SAME object they were created with, so a
+    // spread-copy (the previous behaviour) would never reach them.
+    if (pollingRef.current) pollingRef.current.cancelled = true
+    if (uploadingFilesRef.current) uploadingFilesRef.current.cancelled = true
     persist(null)
   }, [persist])
 
+  // Poll the server until the session reaches a terminal state. Returns an
+  // explicit outcome so callers (both startUpload and the on-mount rehydrate
+  // path) can decide what to do next — most importantly, whether to navigate
+  // the user to /review. The previous version returned void and the caller
+  // had to guess from a stale `status` closure + cancelled flag, which broke
+  // for large uploads.
+  type PollOutcome = 'ready' | 'failed' | 'cancelled'
   const pollUntilDone = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<PollOutcome> => {
       // Cancel any prior poller.
       if (pollingRef.current) pollingRef.current.cancelled = true
       const handle = { sessionId: id, cancelled: false }
       pollingRef.current = handle
 
       const POLL_INTERVAL_MS = 2_000
-      const MAX_WAIT_MS = 20 * 60 * 1000
-      const start = Date.now()
-
       const pollLog = withContext({ scope: 'client.upload.poll', session_id: id })
-      while (!handle.cancelled && Date.now() - start < MAX_WAIT_MS) {
+
+      // No hard timeout: a large lot can spend an hour+ in OCR and the user
+      // explicitly wants to be auto-navigated when it's done. A stale-tab
+      // poll is harmless (just one GET every 2s) and the user can dismiss
+      // the widget to stop it. The poll only ends when the server reports a
+      // terminal state or the handle is cancelled by another startUpload /
+      // dismiss().
+      while (!handle.cancelled) {
         await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
-        if (handle.cancelled) return
+        if (handle.cancelled) return 'cancelled'
         try {
-          const res = await fetch(`/api/upload-sessions/${id}`)
+          const res = await fetch(`/api/upload-sessions/${id}`, { cache: 'no-store' })
           if (!res.ok) {
             pollLog.warn('poll non-ok response', { status_code: res.status })
             continue
@@ -135,21 +149,21 @@ export default function UploadSessionProvider({ children }: { children: React.Re
             setGroupCount(session.group_count)
             persist({ status: 'done', groupCount: session.group_count })
             pollLog.info('session ready', { group_count: session.group_count })
-            return
+            return 'ready'
           }
           if (session.status === 'failed') {
             setStatus('error')
             setError(session.error_message ?? 'Processing failed')
             persist(null)
             pollLog.error('session failed', { err: session.error_message })
-            return
+            return 'failed'
           }
         } catch (err) {
           // Transient network — keep polling.
           pollLog.warn('poll transient error', { err })
         }
       }
-      pollLog.warn('polling timed out', { dur_ms: Date.now() - start })
+      return 'cancelled'
     },
     [persist],
   )
@@ -259,11 +273,14 @@ export default function UploadSessionProvider({ children }: { children: React.Re
 
         // 4. Poll until done. Runs in this same provider, so navigating to /review
         //    or any other dashboard page does not interrupt it.
-        await pollUntilDone(session.id)
+        const outcome = await pollUntilDone(session.id)
 
-        // 5. If we ended up in done state, send the user to review.
-        //    (router.push is safe here; we are in a client component.)
-        if (status === 'done' || pollingRef.current?.cancelled === false) {
+        // 5. Navigate ONLY on a real "ready" signal from the server. The prior
+        //    version checked a stale closure-captured `status` + cancelled flag,
+        //    which fired on timeout/failure too (taking the user to an empty
+        //    review page) and missed real successes for large jobs that
+        //    exceeded the old 20-minute poll cap.
+        if (outcome === 'ready') {
           router.push(`/review?session=${session.id}`)
         }
       } catch (err) {
@@ -274,7 +291,11 @@ export default function UploadSessionProvider({ children }: { children: React.Re
         persist(null)
       }
     },
-    [persist, pollUntilDone, router, status],
+    // `status` was previously in deps to support the (broken) stale-closure
+    // navigation check. Now that we navigate solely off the pollUntilDone
+    // outcome, status is no longer read inside this callback — dropping it
+    // keeps startUpload's identity stable while an upload is in flight.
+    [persist, pollUntilDone, router],
   )
 
   // On mount: if there's a persisted in-flight session, hydrate state from it
@@ -296,7 +317,17 @@ export default function UploadSessionProvider({ children }: { children: React.Re
       persisted.status === 'processing' ||
       persisted.status === 'uploading'
     ) {
-      void pollUntilDone(persisted.sessionId)
+      // Hydration path: resume polling. If the session reaches review_ready
+      // while the user is on a non-review page, auto-navigate them — matches
+      // the startUpload flow. Without this, reloading mid-process leaves the
+      // user stuck staring at the progress widget forever.
+      void pollUntilDone(persisted.sessionId).then((outcome) => {
+        if (outcome === 'ready' && typeof window !== 'undefined') {
+          if (!window.location.pathname.startsWith('/review')) {
+            router.push(`/review?session=${persisted.sessionId}`)
+          }
+        }
+      })
     }
   }, [])
   /* eslint-enable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */

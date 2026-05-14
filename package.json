@@ -2,6 +2,7 @@
   "name": "ocr-crm",
   "version": "0.1.0",
   "private": true,
+  "main": "electron/main.cjs",
   "engines": {
     "node": ">=20.9.0"
   },
@@ -9,7 +10,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start -p ${PORT:-3000}",
-    "lint": "eslint"
+    "lint": "eslint",
+    "electron:dev": "cross-env NODE_ENV=development electron .",
+    "electron:build": "next build && electron-builder",
+    "dist": "next build && electron-builder --win"
   },
   "dependencies": {
     "@google-cloud/vision": "^5.3.5",
@@ -42,9 +46,66 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "cross-env": "^7.0.3",
+    "electron": "^34.5.8",
+    "electron-builder": "^25.1.8",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "build": {
+    "appId": "com.ocrcrm.desktop",
+    "productName": "OCR CRM",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": ".next/standalone",
+        "to": "standalone",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": ".next/static",
+        "to": "standalone/.next/static",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "public",
+        "to": "standalone/public",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "OCR CRM"
+    }
   }
 }

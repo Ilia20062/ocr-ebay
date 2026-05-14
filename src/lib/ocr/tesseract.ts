@@ -14,15 +14,27 @@ const TESSERACT_TIMEOUT_MS = 30_000
 //   [externals]/tesseract.js/src/worker-script/node/index.js
 // Tesseract.js then hands that string to node:worker_threads' new Worker(file),
 // which rejects anything that isn't absolute or starts with './'. So we go
-// straight to the filesystem, anchored at process.cwd() (the project root for
-// `next dev` and `next start`).
+// straight to the filesystem.
+//
+// Search roots in order:
+//   1. OCR_TESSERACT_ROOT  — set by the Electron main process to the unpacked
+//      asar location (app.asar.unpacked/node_modules) where native + worker
+//      assets live in the packaged .exe.
+//   2. process.cwd()       — works for `next dev`, `next start`, and the
+//      standalone server (which chdirs into .next/standalone).
 //
 // If a path isn't there at runtime (e.g. an unfamiliar deployment layout) we
 // leave it undefined and let tesseract.js try its own resolution. We never set
 // the option to a virtual or otherwise invalid string — that's what was crashing.
 function resolveOnDisk(...segments: string[]): string | undefined {
-  const candidate = path.join(process.cwd(), 'node_modules', ...segments)
-  return existsSync(candidate) ? candidate : undefined
+  const roots: string[] = []
+  if (process.env.OCR_TESSERACT_ROOT) roots.push(process.env.OCR_TESSERACT_ROOT)
+  roots.push(path.join(process.cwd(), 'node_modules'))
+  for (const root of roots) {
+    const candidate = path.join(root, ...segments)
+    if (existsSync(candidate)) return candidate
+  }
+  return undefined
 }
 
 const RESOLVED_WORKER_PATH = resolveOnDisk('tesseract.js', 'src', 'worker-script', 'node', 'index.js')

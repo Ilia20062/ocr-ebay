@@ -20,6 +20,24 @@
 # production
 /build
 
+# electron packaging
+/dist
+/release
+*.exe
+
+# os
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# editors
+.vscode/
+.idea/
+
+# scratch
+/tmp/
+/temp/
+
 # misc
 .DS_Store
 *.pem
