@@ -38,6 +38,13 @@ export interface ValidateOptions {
   perQueryLimit?: number
   /** Shared cache across clusters in the same session. */
   cache?: CandidateCache
+  /**
+   * Skip the per-call userHasEbayConnection check. Set true when the caller
+   * has already verified the user is connected (e.g. the session-process
+   * pipeline checks once per session and reuses the result across clusters).
+   * Saves one DB read + 2 AES decrypts per cluster.
+   */
+  skipConnectionCheck?: boolean
 }
 
 export interface ValidationOutcome {
@@ -114,9 +121,12 @@ export async function validateCandidatesWithEbay(
 
   if (!resolved.winningCode) return baseline
 
-  // Bail cheaply if eBay isn't connected.
-  const connected = await userHasEbayConnection(userId)
-  if (!connected) return baseline
+  // Bail cheaply if eBay isn't connected. Skip when the caller has already
+  // verified (avoids 36× redundant DB reads + AES decrypts per session).
+  if (!opts.skipConnectionCheck) {
+    const connected = await userHasEbayConnection(userId)
+    if (!connected) return baseline
+  }
 
   const cache = opts.cache ?? new Map<string, MatchInfo>()
   const maxCandidates = opts.maxCandidates ?? 4
@@ -140,28 +150,41 @@ export async function validateCandidatesWithEbay(
 
   if (unique.length === 0) return baseline
 
-  // Query eBay for each candidate (sequential — Browse is rate-limited and
-  // these run inside the session-process loop where we already parallelise
-  // across clusters). Cache hits short-circuit the call.
+  // Query eBay for each uncached candidate in parallel. Browse is rate-limited
+  // per second, but a Promise.all of ≤ maxCandidates (default 4) per cluster
+  // stays well inside the budget. Cache hits short-circuit before the call.
   let queriedAny = false
+  const cached: string[] = []
+  const uncached: string[] = []
   for (const code of unique) {
-    const cached = cache.get(code)
-    if (cached) {
-      matches[code] = cached
-      continue
+    const hit = cache.get(code)
+    if (hit) {
+      matches[code] = hit
+      cached.push(code)
+    } else {
+      uncached.push(code)
     }
-    try {
-      const items = await searchEbayProducts(userId, code, perQueryLimit)
-      const info: MatchInfo = {
-        matchCount: items.length,
-        bestMatchTitle: items[0]?.title ?? null,
+  }
+
+  if (uncached.length > 0) {
+    const results = await Promise.allSettled(
+      uncached.map((code) => searchEbayProducts(userId, code, perQueryLimit)),
+    )
+    for (let i = 0; i < uncached.length; i++) {
+      const code = uncached[i]
+      const r = results[i]
+      if (r.status === 'fulfilled') {
+        const info: MatchInfo = {
+          matchCount: r.value.length,
+          bestMatchTitle: r.value[0]?.title ?? null,
+        }
+        cache.set(code, info)
+        matches[code] = info
+        queriedAny = true
+      } else {
+        // Per-candidate failure is logged but does not poison the whole batch.
+        log.warn('candidate validation failed', { code, err: r.reason })
       }
-      cache.set(code, info)
-      matches[code] = info
-      queriedAny = true
-    } catch (err) {
-      // Per-candidate failure is logged but does not poison the whole batch.
-      log.warn('candidate validation failed', { code, err })
     }
   }
 

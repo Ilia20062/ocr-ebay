@@ -21,10 +21,6 @@ export const sessionPresignSchema = z.object({
   file_size_bytes: z.number().int().min(1).max(10 * 1024 * 1024),
 })
 
-export const sessionConfirmSchema = z.object({
-  image_id: z.string().uuid(),
-})
-
 export const mergeBatchesSchema = z.object({
   batch_ids: z.array(z.string().uuid()).min(2),
 })

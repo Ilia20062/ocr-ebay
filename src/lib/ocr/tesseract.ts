@@ -1,10 +1,31 @@
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import * as path from 'node:path'
+import * as os from 'node:os'
 import { log } from '@/lib/log'
 import type { OcrProviderResult } from '@/types/ocr'
 import { extractCandidates, selectTopCandidate } from './code-extractor'
 
 const TESSERACT_TIMEOUT_MS = 30_000
+
+/**
+ * Where to cache `eng.traineddata` (~10 MB) so we download it from the CDN
+ * only once per machine instead of once per worker init. Tesseract.js reads
+ * from cachePath on subsequent inits when the file is present. Prefer an
+ * Electron-aware dir if set, otherwise a per-user temp dir.
+ */
+function resolveTessCachePath(): string {
+  const root = process.env.OCR_TESSERACT_CACHE
+    || (process.env.OCR_TESSERACT_ROOT ? path.join(process.env.OCR_TESSERACT_ROOT, '.tesseract-cache') : null)
+    || path.join(os.tmpdir(), 'ocr-crm-tesseract-cache')
+  try {
+    mkdirSync(root, { recursive: true })
+  } catch {
+    // mkdir is best-effort — tesseract.js will fall back to its default behaviour.
+  }
+  return root
+}
+
+const TESS_CACHE_PATH = resolveTessCachePath()
 
 // Resolve tesseract.js worker + core paths from disk at module load.
 //
@@ -93,6 +114,13 @@ export async function createTesseractWorker(): Promise<TesseractWorker> {
     const opts: Record<string, unknown> = {
       logger: () => {},
       langPath: 'https://tessdata.projectnaptha.com/4.0.0',
+      // Persist the downloaded eng.traineddata so subsequent worker inits
+      // (including across upload sessions and across process restarts) skip
+      // the ~10 MB CDN fetch. `readWrite` writes on first download, reads
+      // thereafter. Tesseract.js silently falls back to network if the dir
+      // is unwritable.
+      cachePath: TESS_CACHE_PATH,
+      cacheMethod: 'readWrite',
     }
     if (RESOLVED_WORKER_PATH) opts.workerPath = RESOLVED_WORKER_PATH
     if (RESOLVED_CORE_PATH) opts.corePath = RESOLVED_CORE_PATH

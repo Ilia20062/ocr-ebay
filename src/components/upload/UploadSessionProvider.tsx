@@ -201,12 +201,18 @@ export default function UploadSessionProvider({ children }: { children: React.Re
           startedAt: Date.now(),
         })
 
-        // 2. Upload files. Track cancellation so a "dismiss" stops the loop.
+        // 2. Upload files in parallel with a bounded worker pool. The previous
+        //    implementation ran presign → PUT → confirm serially per file,
+        //    which paid 3 round-trips of latency per image. With 300 files at
+        //    ~300 ms RTT that's ~90 s wasted on the network alone. The /confirm
+        //    round-trip has been removed entirely — the image row is created
+        //    at presign time and process/route.ts reads the table directly.
         if (uploadingFilesRef.current) uploadingFilesRef.current.cancelled = true
         const uploadHandle = { sessionId: session.id, cancelled: false }
         uploadingFilesRef.current = uploadHandle
 
-        for (const file of files) {
+        const UPLOAD_CONCURRENCY = 8
+        async function uploadOne(file: File) {
           if (uploadHandle.cancelled) return
           const presignRes = await fetch(
             `/api/upload-sessions/${session.id}/images/presign`,
@@ -226,7 +232,7 @@ export default function UploadSessionProvider({ children }: { children: React.Re
               `Failed to get upload URL for ${file.name}: ${j.error ?? `HTTP ${presignRes.status}`}`,
             )
           }
-          const { upload_url, image_id } = (await presignRes.json()) as {
+          const { upload_url } = (await presignRes.json()) as {
             upload_url: string
             image_id: string
           }
@@ -242,18 +248,26 @@ export default function UploadSessionProvider({ children }: { children: React.Re
             )
           }
 
-          await fetch(`/api/upload-sessions/${session.id}/images/confirm`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image_id }),
-          })
-
           setUploaded((prev) => {
             const next = prev + 1
             persist({ uploaded: next })
             return next
           })
         }
+
+        // Worker-pool fan-out. Each "worker" pulls the next index from a shared
+        // counter — bounded concurrency without a queue library.
+        let nextIdx = 0
+        const workers = Array.from({ length: Math.min(UPLOAD_CONCURRENCY, files.length) }, async () => {
+          while (true) {
+            if (uploadHandle.cancelled) return
+            const idx = nextIdx++
+            if (idx >= files.length) return
+            await uploadOne(files[idx])
+          }
+        })
+        await Promise.all(workers)
+        if (uploadHandle.cancelled) return
 
         upLog.info('all files uploaded', {
           session_id: session.id,

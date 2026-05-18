@@ -70,8 +70,6 @@ export const POST = withAuth(async (req, userId, params) => {
     return apiError('Failed to create image record', 500)
   }
 
-  await db.storage.createBucket('images', { public: false })
-
   const { data: signedUrl, error: urlError } = await db.storage
     .from('images')
     .createSignedUploadUrl(storagePath)

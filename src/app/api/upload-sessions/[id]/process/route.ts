@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server'
 import { withAuth, apiError } from '@/lib/middleware'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
-import { TesseractPool, recognizeWithFallback } from '@/lib/ocr/pool'
+import {
+  type TesseractPool,
+  recognizeWithFallback,
+  getSharedTesseractPool,
+} from '@/lib/ocr/pool'
 import { resolveGroupCode } from '@/lib/ocr/group-resolver'
 import {
   userHasEbayConnection,
@@ -14,8 +18,6 @@ import { pickLabelCandidate, pickLabelCandidates } from '@/lib/grouping/labelPic
 import { withContext } from '@/lib/log'
 import type { Json } from '@/types/supabase'
 import type { OcrCandidate } from '@/types/ocr'
-
-const OCR_CONCURRENCY = 4
 
 interface SessionImage {
   id: string
@@ -98,6 +100,11 @@ async function processSessionInBackground(
 ) {
   const log = withContext({ scope: 'session.process', user_id: userId, session_id: sessionId })
   const db = getSupabaseAdminClient()
+  // The pool is a module-level singleton — survives across upload sessions
+  // so we don't pay the ~5-10s worker init + langdata download on every
+  // upload. First caller in this process eats the cost; subsequent uploads
+  // get an already-warm pool. We never call .terminate() — process exit
+  // cleans up.
   let pool: TesseractPool | null = null
   const tStart = Date.now()
 
@@ -140,9 +147,8 @@ async function processSessionInBackground(
     log.info('candidate validation mode', { ebay_connected: ebayConnected })
 
     const tPool = Date.now()
-    pool = new TesseractPool(Math.min(OCR_CONCURRENCY, images.length))
     try {
-      await pool.init()
+      pool = await getSharedTesseractPool()
     } catch (err) {
       log.error('Tesseract pool init failed — aborting session', { err })
       await db
@@ -154,14 +160,21 @@ async function processSessionInBackground(
         .eq('id', sessionId)
       return
     }
-    log.info('OCR pool ready', { workers: OCR_CONCURRENCY, dur_ms: Date.now() - tPool })
+    log.info('OCR pool ready', { dur_ms: Date.now() - tPool })
 
-    let clusterIdx = 0
     let totalCodesFound = 0
     let totalNoCode = 0
     let totalImagesOcrd = 0 // For visibility: how many images we actually OCR'd vs total uploaded
-    for (const cluster of clusters) {
-      const cIdx = clusterIdx++
+
+    // Process clusters in parallel. The Tesseract pool's idle-queue makes
+    // concurrent map() calls safe (workers serialize per-recognize), and the
+    // 4 workers stay saturated by images drawn from any cluster — so wall-time
+    // for an N-cluster session approaches `(total_images / pool_size) * per_image`
+    // rather than the previous serial sum. Cap parallelism at CLUSTER_CONCURRENCY
+    // to bound DB write fan-out (each cluster does an insert + a few updates).
+    const CLUSTER_CONCURRENCY = 4
+
+    async function processCluster(cluster: ClusterImage[], cIdx: number): Promise<void> {
       const tBatch = Date.now()
 
       const { data: batch, error: batchErr } = await db
@@ -183,7 +196,7 @@ async function processSessionInBackground(
           cluster_size: cluster.length,
           err: batchErr,
         })
-        continue
+        return
       }
 
       const { error: reparentErr } = await db
@@ -263,6 +276,10 @@ async function processSessionInBackground(
         try {
           const outcome = await validateCandidatesWithEbay(userId, initialResolved, {
             cache: candidateCache,
+            // We already verified eBay is connected at session start
+            // (ebayConnected above). Skip the per-cluster recheck — saves a
+            // DB read + 2 AES decrypts per cluster.
+            skipConnectionCheck: true,
           })
           resolved = outcome.reranked
           validationSwapped = outcome.swapped
@@ -306,6 +323,22 @@ async function processSessionInBackground(
       })
     }
 
+    // Bounded-concurrency runner: each "slot" pulls the next cluster index
+    // until exhausted. CLUSTER_CONCURRENCY parallel slots → at most that many
+    // clusters in flight at once.
+    let nextCluster = 0
+    const slots = Array.from(
+      { length: Math.min(CLUSTER_CONCURRENCY, clusters.length) },
+      async () => {
+        while (true) {
+          const idx = nextCluster++
+          if (idx >= clusters.length) return
+          await processCluster(clusters[idx], idx)
+        }
+      },
+    )
+    await Promise.all(slots)
+
     await db.from('upload_sessions').update({ status: 'review_ready' }).eq('id', sessionId)
     log.info('session ready for review', {
       cluster_count: clusters.length,
@@ -323,22 +356,21 @@ async function processSessionInBackground(
       .from('upload_sessions')
       .update({ status: 'failed', error_message: msg })
       .eq('id', sessionId)
-  } finally {
-    if (pool) {
-      try {
-        await pool.terminate()
-      } catch (err) {
-        log.warn('pool termination failed', { err })
-      }
-    }
   }
+  // No pool.terminate() — the pool is a process-wide singleton and is
+  // reused by subsequent uploads. It is freed on process exit.
 }
 
 /**
- * OCR a set of images via the shared pool, write per-image ocr_results rows,
- * update image status, return the inserted rows. Errors per-image are logged
- * + written to images.error_message + enqueued for retry; the caller still
- * receives a (possibly empty) array.
+ * OCR a set of images via the shared pool, write all ocr_results rows in ONE
+ * multi-row insert at the end, return the inserted rows. Errors per-image are
+ * logged + written to images.error_message + enqueued for retry.
+ *
+ * Per-image status updates ('ocr_processing' / 'ocr_done') and the per-image
+ * `upload_batches.processed` counter were removed: with 300 images that adds up
+ * to ~1500 Supabase round-trips for state nobody downstream reads in real time.
+ * `processed` is set to cluster.length once per cluster by the caller when the
+ * cluster transitions to 'awaiting_review' (see line ~290).
  */
 async function runOcrOnImages(
   pool: TesseractPool,
@@ -356,14 +388,22 @@ async function runOcrOnImages(
     batch_id: batchId,
   })
   const db = getSupabaseAdminClient()
-  const ocrRows: OcrRow[] = []
-  let processed = 0
+
+  interface PendingInsert {
+    image_id: string
+    raw_response: Json
+    extracted_text: string
+    extracted_code: string | null
+    all_candidates: Json
+    confidence: number | null
+    provider: string
+    auto_approved: false
+  }
+  const pending: PendingInsert[] = []
 
   await pool.map(images, async (worker, image) => {
     const tImg = Date.now()
     try {
-      await db.from('images').update({ status: 'ocr_processing' }).eq('id', image.id)
-
       const { data: blob, error: dlError } = await db.storage
         .from('images')
         .download(image.storage_path)
@@ -377,40 +417,17 @@ async function runOcrOnImages(
       const buffer = Buffer.from(ab)
       const ocrResult = await recognizeWithFallback(worker, buffer, blob.type || 'image/jpeg')
 
-      const { data: inserted, error: insertErr } = await db
-        .from('ocr_results')
-        .insert({
-          image_id: image.id,
-          raw_response: ocrResult.rawResponse as unknown as Json,
-          extracted_text: ocrResult.extractedText,
-          extracted_code: ocrResult.topCandidate?.text ?? null,
-          all_candidates: ocrResult.candidates as unknown as Json,
-          confidence: ocrResult.topCandidate?.confidence ?? null,
-          provider: ocrResult.provider,
-          auto_approved: false,
-        })
-        .select('id, image_id, extracted_code, confidence, all_candidates')
-        .single()
-
-      if (insertErr || !inserted) {
-        throw new Error(`ocr_results insert failed: ${insertErr?.message ?? 'no row returned'}`)
-      }
-
-      ocrRows.push({
-        id: inserted.id,
-        image_id: inserted.image_id,
-        extracted_code: inserted.extracted_code,
-        confidence: inserted.confidence,
-        all_candidates: (inserted.all_candidates as unknown as OcrCandidate[]) ?? [],
+      pending.push({
+        image_id: image.id,
+        raw_response: ocrResult.rawResponse as unknown as Json,
+        extracted_text: ocrResult.extractedText,
+        extracted_code: ocrResult.topCandidate?.text ?? null,
+        all_candidates: ocrResult.candidates as unknown as Json,
+        confidence: ocrResult.topCandidate?.confidence ?? null,
+        provider: ocrResult.provider,
+        auto_approved: false,
       })
 
-      await db.from('images').update({ status: 'ocr_done' }).eq('id', image.id)
-
-      // Promoted from debug to info — visible in normal `next dev` console.
-      // text_len = 0 means Tesseract crashed silently or hit the timeout.
-      // text_len > 30 with no top_code means Tesseract read text but the
-      // regex/scoring didn't find anything resembling a part number — log a
-      // text snippet so we can see what was actually on the image.
       const textLen = ocrResult.extractedText.length
       const candCount = ocrResult.candidates.length
       log.info('image ocr done', {
@@ -455,11 +472,29 @@ async function runOcrOnImages(
       } catch (e) {
         log.warn('enqueueRetry failed', { image_id: image.id, err: e })
       }
-    } finally {
-      processed++
-      await db.from('upload_batches').update({ processed }).eq('id', batchId)
     }
   })
 
-  return ocrRows
+  if (pending.length === 0) return []
+
+  const { data: insertedRows, error: bulkErr } = await db
+    .from('ocr_results')
+    .insert(pending)
+    .select('id, image_id, extracted_code, confidence, all_candidates')
+
+  if (bulkErr || !insertedRows) {
+    log.error('bulk ocr_results insert failed', {
+      pending_count: pending.length,
+      err: bulkErr,
+    })
+    return []
+  }
+
+  return insertedRows.map((r) => ({
+    id: r.id,
+    image_id: r.image_id,
+    extracted_code: r.extracted_code,
+    confidence: r.confidence,
+    all_candidates: (r.all_candidates as unknown as OcrCandidate[]) ?? [],
+  }))
 }
