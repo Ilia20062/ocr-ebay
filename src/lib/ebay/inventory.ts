@@ -3,6 +3,62 @@ import { describeEbayError } from './error'
 import { withContext } from '@/lib/log'
 import type { EbayInventoryItem, EbayOffer } from '@/types/ebay'
 
+// Valid Sell-API condition enum values. Anything outside this set triggers
+// eBay errorId=2004 "Could not serialize field [condition]".
+// https://developer.ebay.com/api-docs/sell/inventory/types/slr:ConditionEnum
+const VALID_CONDITIONS = new Set([
+  'NEW',
+  'LIKE_NEW',
+  'NEW_OTHER',
+  'NEW_WITH_DEFECTS',
+  'MANUFACTURER_REFURBISHED',
+  'CERTIFIED_REFURBISHED',
+  'EXCELLENT_REFURBISHED',
+  'VERY_GOOD_REFURBISHED',
+  'GOOD_REFURBISHED',
+  'SELLER_REFURBISHED',
+  'USED_EXCELLENT',
+  'USED_VERY_GOOD',
+  'USED_GOOD',
+  'USED_ACCEPTABLE',
+  'FOR_PARTS_OR_NOT_WORKING',
+])
+
+// Browse-API returns human-readable strings ("Used", "Pre-owned", "For parts
+// or not working"); the Sell API requires the strict enum above. Map common
+// variants → enum, then fall back to USED_EXCELLENT as a safe default.
+export function normalizeCondition(raw: string | null | undefined): string {
+  if (!raw) return 'USED_EXCELLENT'
+  const upper = raw.toString().trim().toUpperCase().replace(/[\s-]+/g, '_')
+
+  // Already a valid enum (e.g. caller passed USED_EXCELLENT).
+  if (VALID_CONDITIONS.has(upper)) return upper
+
+  // Common Browse-API / human-readable variants.
+  const map: Record<string, string> = {
+    USED: 'USED_EXCELLENT',
+    PRE_OWNED: 'USED_EXCELLENT',
+    PREOWNED: 'USED_EXCELLENT',
+    OPEN_BOX: 'NEW_OTHER',
+    'NEW_OTHER_(SEE_DETAILS)': 'NEW_OTHER',
+    NEW_OTHER_SEE_DETAILS: 'NEW_OTHER',
+    REFURBISHED: 'SELLER_REFURBISHED',
+    'CERTIFIED_-_REFURBISHED': 'CERTIFIED_REFURBISHED',
+    FOR_PARTS: 'FOR_PARTS_OR_NOT_WORKING',
+    NOT_WORKING: 'FOR_PARTS_OR_NOT_WORKING',
+    BRAND_NEW: 'NEW',
+  }
+  if (map[upper]) return map[upper]
+
+  // Heuristic fallbacks for anything unrecognized.
+  if (upper.startsWith('NEW')) return 'NEW'
+  if (upper.includes('REFURB')) return 'SELLER_REFURBISHED'
+  if (upper.includes('PART') || upper.includes('NOT_WORK') || upper.includes('BROKEN')) {
+    return 'FOR_PARTS_OR_NOT_WORKING'
+  }
+  return 'USED_EXCELLENT'
+}
+
 interface CreateListingParams {
   userId: string
   sku: string
@@ -159,6 +215,14 @@ export async function createAndPublishListing(
     return_policy_id: returnPolicyId,
   })
 
+  const normalizedCondition = normalizeCondition(condition)
+  if (normalizedCondition !== condition) {
+    log.info('Normalized condition for Sell API', {
+      raw: condition,
+      normalized: normalizedCondition,
+    })
+  }
+
   const inventoryItem: EbayInventoryItem = {
     sku,
     product: {
@@ -166,7 +230,7 @@ export async function createAndPublishListing(
       description,
       ...(imageUrls.length > 0 ? { imageUrls } : {}),
     },
-    condition: condition.toUpperCase().replace(/\s/g, '_'),
+    condition: normalizedCondition,
     availability: { shipToLocationAvailability: { quantity } },
   }
 
