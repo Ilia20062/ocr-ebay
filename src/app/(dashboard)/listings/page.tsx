@@ -3,6 +3,7 @@ import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { getSupabaseServerClient } from '@/lib/supabase/server'
 import { PackageOpen } from 'lucide-react'
 import PublishButton from './PublishButton'
+import CategoryOverride from './CategoryOverride'
 
 export const dynamic = 'force-dynamic'
 
@@ -137,6 +138,13 @@ export default async function ListingsPage({
                 <p className="text-xs text-red-600 bg-red-50 rounded p-2 whitespace-pre-wrap break-words">
                   {listing.error_message}
                 </p>
+              )}
+
+              {(listing.status === 'draft' || listing.status === 'failed') && (
+                <CategoryOverride
+                  listingId={listing.id}
+                  currentCategoryId={listing.category_id}
+                />
               )}
             </div>
           ))}

@@ -31,10 +31,16 @@ export const PATCH = withAuth(async (req, userId, params) => {
   if (!data) return apiError('Listing not found', 404)
   if (data.status === 'active') return apiError('Cannot edit an active listing', 409)
 
-  const allowed = new Set(['title', 'description', 'price', 'quantity', 'condition'])
+  const allowed = new Set(['title', 'description', 'price', 'quantity', 'condition', 'category_id'])
   const updates = Object.fromEntries(
     Object.entries(body as Record<string, unknown>).filter(([k]) => allowed.has(k))
   ) as Database['public']['Tables']['listings']['Update']
+
+  // Clearing a publish error when the user changes the category lets the
+  // failed badge disappear until the next attempt.
+  if ('category_id' in updates) {
+    ;(updates as Record<string, unknown>).error_message = null
+  }
 
   await db.from('listings').update(updates).eq('id', params!.id)
   return NextResponse.json({ success: true })

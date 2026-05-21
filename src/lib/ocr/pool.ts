@@ -1,3 +1,4 @@
+import os from 'node:os'
 import sharp from 'sharp'
 import {
   createTesseractWorker,
@@ -6,32 +7,68 @@ import {
   type TesseractWorker,
 } from './tesseract'
 import { runGoogleVisionOcr } from './google-vision'
-import { scanBarcode } from './barcode'
+import { scanBarcodeFromRgba } from './barcode'
 import { runPaddleOcr, isPaddleEnabled } from './paddle'
 import { log } from '@/lib/log'
 import type { OcrProviderResult } from '@/types/ocr'
 
 /**
  * Modern phone cameras produce 4000+ pixel-wide images. Tesseract.js cost
- * scales roughly with pixel count; 1600 px width keeps molded codes legible
- * while cutting per-image OCR time 2-4×. Also honors EXIF rotation once so
- * both the barcode scanner and the OCR engine see an upright image, instead
- * of barcode redoing the rotation itself.
+ * scales ~linearly with pixel count; 1200 px width keeps molded codes legible
+ * while cutting per-image OCR time substantially. The barcode scanner shares
+ * the same width because we feed it from the same sharp pipeline.
  */
-const OCR_MAX_WIDTH = 1600
+const OCR_MAX_WIDTH = 1200
 
-async function preprocessForOcr(buffer: Buffer): Promise<Buffer> {
+interface PreprocessOutput {
+  /** JPEG-encoded, EXIF-rotated, resized buffer for OCR engines. */
+  jpeg: Buffer
+  /** Raw RGBA pixels at the same dimensions for zxing — null if not requested. */
+  rgba: Buffer | null
+  width: number
+  height: number
+  /** True when sharp failed to decode and we fell back to the original buffer. */
+  fallback: boolean
+}
+
+/**
+ * Single sharp decode that produces BOTH the JPEG buffer the OCR engines need
+ * AND the raw RGBA buffer the barcode scanner needs. Previously the pipeline
+ * re-decoded the same JPEG twice (once in preprocessForOcr, once in scanBarcode),
+ * which doubled per-image sharp cost on every image. `clone()` shares the
+ * decoded source between the two output pipelines.
+ */
+async function preprocessForOcr(buffer: Buffer, wantRgba: boolean): Promise<PreprocessOutput> {
   try {
-    return await sharp(buffer)
-      .rotate() // honor EXIF orientation
+    const base = sharp(buffer)
+      .rotate()
       .resize({ width: OCR_MAX_WIDTH, withoutEnlargement: true })
-      .jpeg({ quality: 85 })
-      .toBuffer()
+
+    if (wantRgba) {
+      const [jpeg, rgba] = await Promise.all([
+        base.clone().jpeg({ quality: 85 }).toBuffer({ resolveWithObject: true }),
+        base.clone().ensureAlpha().raw().toBuffer({ resolveWithObject: true }),
+      ])
+      return {
+        jpeg: jpeg.data,
+        rgba: rgba.data,
+        width: rgba.info.width,
+        height: rgba.info.height,
+        fallback: false,
+      }
+    }
+
+    const jpeg = await base.jpeg({ quality: 85 }).toBuffer({ resolveWithObject: true })
+    return {
+      jpeg: jpeg.data,
+      rgba: null,
+      width: jpeg.info.width,
+      height: jpeg.info.height,
+      fallback: false,
+    }
   } catch (err) {
-    // If sharp can't decode (unusual format, corrupt bytes), fall back to the
-    // original buffer — barcode/OCR engines will get their own crack at it.
     log.warn('OCR preprocess failed — using original buffer', { scope: 'ocr.preprocess', err })
-    return buffer
+    return { jpeg: buffer, rgba: null, width: 0, height: 0, fallback: true }
   }
 }
 
@@ -149,7 +186,11 @@ function readPoolSize(): number {
   const raw = process.env.OCR_CONCURRENCY
   const parsed = raw ? parseInt(raw, 10) : NaN
   if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 16) return parsed
-  return 6 // sensible default for modern multi-core dev / Electron machines
+  // Auto-size: one worker per CPU minus the main thread, clamped [4, 8]. Below
+  // 4 the pool stalls behind serial sharp+download cost; above 8 we just churn
+  // L3 with no Tesseract-side speedup on a typical desktop.
+  const cpuCount = os.cpus()?.length ?? 4
+  return Math.max(4, Math.min(8, cpuCount - 1))
 }
 
 export async function getSharedTesseractPool(): Promise<TesseractPool> {
@@ -210,45 +251,54 @@ export function recognizeFromBuffer(
  *
  * Vision is silently skipped if GOOGLE_VISION_API_KEY isn't set.
  */
+export interface RecognizeOptions {
+  /**
+   * Skip the zxing barcode pre-pass. Use when the input is known not to contain
+   * printed barcodes (molded-plastic close-ups in phase-1 of session/process).
+   * Avoids the raw-RGBA encode + zxing TRY_HARDER decode cost (~200-400ms/img).
+   */
+  skipBarcode?: boolean
+}
+
 export async function recognizeWithFallback(
   worker: TesseractWorker,
   buffer: Buffer,
   mimeType?: string,
+  options: RecognizeOptions = {},
 ): Promise<OcrProviderResult> {
   const visionEnabled = !!process.env.GOOGLE_VISION_API_KEY
   const paddleEnabled = isPaddleEnabled()
+  const wantBarcode = !options.skipBarcode
 
-  // Single sharp-based preprocess: EXIF-rotate + resize to OCR_MAX_WIDTH +
-  // re-encode as JPEG. Reused for the barcode pre-pass and the OCR engine so
-  // we never decode the same 12-MP file twice.
-  const processed = await preprocessForOcr(buffer)
-  const processedMime = processed === buffer ? mimeType : 'image/jpeg'
+  // Single sharp pipeline: produce JPEG (for OCR) + optional RGBA (for zxing)
+  // from one decode. Previously preprocessForOcr + scanBarcode each ran their
+  // own sharp pipeline against the original buffer — doubling per-image decode
+  // cost. Skipping RGBA when barcode is disabled avoids the extra encode too.
+  const processed = await preprocessForOcr(buffer, wantBarcode)
+  const processedJpeg = processed.jpeg
+  const processedMime = processed.fallback ? mimeType : 'image/jpeg'
 
-  // 0) Barcode pre-pass — if the image has a printed barcode/QR, decode wins.
+  // 0) Barcode pre-pass (when requested + we have RGBA pixels in hand).
   //    Pure-1D and QR codes return their exact payload with effectively 100%
-  //    confidence, beating any OCR engine. Costs ~50-150ms per image.
-  try {
-    const hit = await scanBarcode(processed)
-    if (hit) {
-      const result: OcrProviderResult = {
-        rawResponse: { format: hit.format, code: hit.code },
-        extractedText: hit.code,
-        candidates: [{ text: hit.code, confidence: 1 }],
-        topCandidate: { text: hit.code, confidence: 1 },
-        provider: 'barcode',
+  //    confidence, beating any OCR engine.
+  if (wantBarcode && processed.rgba) {
+    try {
+      const hit = scanBarcodeFromRgba(processed.rgba, processed.width, processed.height)
+      if (hit) {
+        return {
+          rawResponse: { format: hit.format, code: hit.code },
+          extractedText: hit.code,
+          candidates: [{ text: hit.code, confidence: 1 }],
+          topCandidate: { text: hit.code, confidence: 1 },
+          provider: 'barcode',
+        }
       }
-      return result
+    } catch (err) {
+      log.debug('barcode pre-pass threw', { scope: 'ocr.recognize', err })
     }
-  } catch (err) {
-    // scanBarcode is supposed to never throw, but be defensive.
-    log.debug('barcode pre-pass threw', { scope: 'ocr.recognize', err })
   }
 
   // 1) Primary OCR.
-  //    - If PaddleOCR is configured (PADDLE_OCR_URL env var → sidecar), use it.
-  //      It's significantly more accurate on molded/embossed labels than
-  //      Tesseract.
-  //    - Otherwise fall back to in-process Tesseract.
   let primaryResult: OcrProviderResult | null = null
   let primaryErr: unknown = null
   const primaryStart = Date.now()
@@ -256,9 +306,9 @@ export async function recognizeWithFallback(
 
   try {
     if (paddleEnabled) {
-      primaryResult = await runPaddleOcr(processed, processedMime)
+      primaryResult = await runPaddleOcr(processedJpeg, processedMime)
     } else {
-      primaryResult = await recognizeBuffer(worker, processed, processedMime)
+      primaryResult = await recognizeBuffer(worker, processedJpeg, processedMime)
     }
   } catch (err) {
     primaryErr = err
@@ -268,11 +318,9 @@ export async function recognizeWithFallback(
       dur_ms: Date.now() - primaryStart,
       err,
     })
-    // If Paddle failed, try Tesseract before giving up — the in-process worker
-    // is always available and gives us a non-empty result on most images.
     if (paddleEnabled) {
       try {
-        primaryResult = await recognizeBuffer(worker, processed, processedMime)
+        primaryResult = await recognizeBuffer(worker, processedJpeg, processedMime)
       } catch (tessErr) {
         log.warn('Tesseract failed after Paddle failure', {
           scope: 'ocr.recognize',
@@ -292,7 +340,7 @@ export async function recognizeWithFallback(
   if (visionEnabled) {
     const visionStart = Date.now()
     try {
-      const visionResult = await runGoogleVisionOcr(processed.toString('base64'), processedMime)
+      const visionResult = await runGoogleVisionOcr(processedJpeg.toString('base64'), processedMime)
       log.info('Vision fallback ran', {
         scope: 'ocr.recognize',
         text_len: visionResult.extractedText.length,

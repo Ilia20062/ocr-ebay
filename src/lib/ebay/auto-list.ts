@@ -1,7 +1,13 @@
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { createAndPublishListing } from './inventory'
-import { getBusinessPolicies } from './policies'
+import { getBusinessPolicies, type BusinessPolicies } from './policies'
 import { generateListingImageUrls } from './image-urls'
+import {
+  pickLeafFromCategories,
+  suggestLeafCategoryId,
+  suggestLeafCategoryIds,
+  ensureLeafCategoryId,
+} from './taxonomy'
 import { enqueueRetry } from '@/lib/retry'
 import { generateListingDescription } from '@/lib/ai/generate-description'
 import { describeEbayError } from './error'
@@ -114,7 +120,37 @@ export async function autoCreateDraftListing({
   const price = parseFloat(bestMatch.price.value)
   const currency = bestMatch.price.currency || 'USD'
   const condition = bestMatch.condition || 'USED_EXCELLENT'
-  const categoryId = bestMatch.categories?.[0]?.categoryId || ''
+  // Resolve a leaf category. Taxonomy is the trusted source: Browse-API
+  // `categories` arrays are inconsistent (sometimes leaf-first, sometimes
+  // root-first, sometimes a retired parent the seller listed against), and
+  // listing in a non-leaf returns errorId=25005. Order:
+  //   1. Taxonomy `get_category_suggestions` keyed off title (always a leaf
+  //      per spec).
+  //   2. Browse-API leaf as fallback if Taxonomy returned nothing.
+  //   3. Walk the result through `ensureLeafCategoryId` as belt-and-suspenders.
+  let categoryId = (await suggestLeafCategoryId(userId, title)) ?? ''
+  if (!categoryId) {
+    categoryId = pickLeafFromCategories(bestMatch.categories) ?? ''
+    if (categoryId) {
+      logger.info('Taxonomy returned no suggestion — falling back to Browse leaf', {
+        category_id: categoryId,
+      })
+    }
+  }
+  if (categoryId) {
+    const verified = await ensureLeafCategoryId(userId, categoryId)
+    if (verified && verified !== categoryId) {
+      logger.info('Walked Browse/Taxonomy category to descendant leaf', {
+        from: categoryId,
+        to: verified,
+      })
+      categoryId = verified
+    } else if (!verified) {
+      logger.warn('Could not verify category as a leaf; using as-is and trusting publish-time retry', {
+        category_id: categoryId,
+      })
+    }
+  }
 
   recordStep(steps, logger, 'Parse Match', 'ok',
     `title="${title}", price=${price} ${currency}, condition=${condition}, category=${categoryId || 'NONE'}, sku=${sku}`,
@@ -283,7 +319,7 @@ export async function publishListing(
   }).eq('id', listingId)
 
   // Resolve business policies (with the auto-opt-in inside getBusinessPolicies).
-  let policies
+  let policies: BusinessPolicies
   try {
     policies = await getBusinessPolicies(userId)
     recordStep(steps, logger, 'Fetch Policies', 'ok',
@@ -327,22 +363,101 @@ export async function publishListing(
     { images: imageUrls.length },
   )
 
-  try {
-    const { listingId: ebayListingId, listingUrl } = await createAndPublishListing({
+  // Validated above, but narrow for TypeScript inside the nested function.
+  const validatedPrice = listing.price as number
+  async function attemptPublish(categoryId: string) {
+    return createAndPublishListing({
       userId,
       sku,
-      title: listing.title,
-      description: listing.description ?? '',
-      price: listing.price,
-      currency: listing.currency,
-      quantity: listing.quantity,
-      condition: listing.condition ?? 'USED_EXCELLENT',
-      categoryId: listing.category_id,
+      title: listing!.title,
+      description: listing!.description ?? '',
+      price: validatedPrice,
+      currency: listing!.currency,
+      quantity: listing!.quantity,
+      condition: listing!.condition ?? 'USED_EXCELLENT',
+      categoryId,
       fulfillmentPolicyId: policies.fulfillmentPolicyId,
       paymentPolicyId: policies.paymentPolicyId,
       returnPolicyId: policies.returnPolicyId,
       imageUrls,
     })
+  }
+
+  try {
+    let ebayListingId: string
+    let listingUrl: string
+
+    // Build the ordered list of category IDs we'll try, deduped. Start with the
+    // saved draft, then every Taxonomy suggestion (5 most relevant). Each one
+    // is walked through `ensureLeafCategoryId` lazily inside the loop.
+    const tried = new Set<string>()
+    const candidates: string[] = []
+    const pushCandidate = (id: string | null | undefined) => {
+      if (!id || tried.has(id)) return
+      tried.add(id)
+      candidates.push(id)
+    }
+    pushCandidate(listing.category_id)
+    const suggestions = await suggestLeafCategoryIds(userId, listing.title, 5)
+    for (const s of suggestions) pushCandidate(s.categoryId)
+    // Last-resort env fallback — useful when every Taxonomy suggestion is in
+    // eBay Motors and the seller isn't enrolled. Set to a non-Motors leaf
+    // your account is permitted to list in (e.g. 99 = "Everything Else > Other").
+    pushCandidate(process.env.EBAY_FALLBACK_CATEGORY_ID?.trim() || null)
+
+    let lastErr: unknown
+    let success = false
+    let publishedFrom = listing.category_id
+    for (const candidate of candidates) {
+      const verified = (await ensureLeafCategoryId(userId, candidate)) ?? candidate
+      try {
+        ;({ listingId: ebayListingId, listingUrl } = await attemptPublish(verified))
+        if (verified !== listing.category_id) {
+          recordStep(steps, logger, 'Resolve Category', 'warn',
+            `Replaced rejected category ${listing.category_id} → ${verified}`,
+            { from: listing.category_id, to: verified, attempted: candidates.length },
+          )
+          await db.from('listings').update({ category_id: verified }).eq('id', listingId)
+        }
+        publishedFrom = verified
+        success = true
+        break
+      } catch (err) {
+        const { ctx } = describeEbayError(err)
+        const isBadCategory = ctx.errors?.some((e) => e.errorId === 25005)
+        if (!isBadCategory) throw err // unrelated failure — don't keep trying
+        lastErr = err
+        logger.warn('Category rejected with 25005 — trying next candidate', {
+          rejected: verified,
+          remaining: candidates.length - candidates.indexOf(candidate) - 1,
+        })
+      }
+    }
+    if (!success) {
+      // Surface an actionable message instead of a raw eBay code. Mercedes,
+      // BMW, etc. titles map to eBay Motors categories; if the seller isn't
+      // enrolled, every Taxonomy suggestion gets rejected.
+      const titleLooksAutomotive = /\b(mercedes|bmw|audi|ford|honda|toyota|chevrolet|vw|volkswagen|nissan|porsche|lexus|jeep|ram|gmc|hyundai|kia|tesla|dashboard|bumper|fender|headlight|taillight|engine)\b/i.test(
+        listing.title,
+      )
+      const hint = titleLooksAutomotive
+        ? ` This usually means your eBay account isn't enrolled in eBay Motors Parts & Accessories. ` +
+          `Either enroll on eBay Seller Hub, set EBAY_FALLBACK_CATEGORY_ID to a non-Motors leaf, ` +
+          `or override this listing's category manually below.`
+        : ` Set EBAY_FALLBACK_CATEGORY_ID, or override this listing's category manually below.`
+      const friendly = new Error(
+        `eBay rejected every category we tried (${candidates.join(', ')}).` + hint,
+      )
+      recordStep(steps, logger, 'Resolve Category', 'fail',
+        friendly.message,
+        { attempted: candidates.length, candidates },
+      )
+      throw friendly
+    }
+    // Type narrowing: success === true guarantees these were assigned above.
+    ebayListingId = ebayListingId!
+    listingUrl = listingUrl!
+    void publishedFrom
 
     recordStep(steps, logger, 'Publish to eBay', 'ok',
       `Listed! listingId=${ebayListingId}, url=${listingUrl}`,

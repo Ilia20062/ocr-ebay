@@ -213,17 +213,27 @@ async function processSessionInBackground(
 
       // ─── Two-phase OCR ────────────────────────────────────────────────────
       // Phase 1: run OCR only on bare .jpg files (close-ups of the molded code).
-      // Phase 2 (fallback): if Phase 1 produced no code, OCR everything else.
+      //   We pass skipBarcode=true because phase-1 inputs are molded plastic
+      //   close-ups that don't carry printed barcodes — saves the zxing
+      //   pre-pass cost on the common path.
+      // Phase 2 (fallback): if Phase 1 produced no code, OCR up to PHASE2_CAP
+      //   of the remaining images by capturedAt. Previously OCR'd every
+      //   remaining PNG which is a latency cliff on clusters of 10+ PNGs.
       // ─────────────────────────────────────────────────────────────────────
+      const PHASE2_CAP = 3
       const labelCandidates = pickLabelCandidates(cluster)
       const phase1Images = labelCandidates.length > 0 ? labelCandidates : cluster
-      const phase1Ocr = await runOcrOnImages(pool!, phase1Images, batch.id, sessionId, userId)
+      const phase1IsLabels = labelCandidates.length > 0
+      const phase1Ocr = await runOcrOnImages(
+        pool!,
+        phase1Images,
+        batch.id,
+        sessionId,
+        userId,
+        { skipBarcode: phase1IsLabels },
+      )
       totalImagesOcrd += phase1Images.length
 
-      // We fall through to phase 2 not just when no code was extracted, but also
-      // when phase 1 returned no rows at all (Tesseract crashed on every label)
-      // or returned only empty text (image had no readable text). Anything that
-      // could plausibly be improved by OCRing more images.
       const phase1HasCode = phase1Ocr.some((r) => r.extracted_code)
       const phase1HadAnyText = phase1Ocr.some(
         (r) => (r.all_candidates && r.all_candidates.length > 0) || r.extracted_code,
@@ -234,15 +244,33 @@ async function processSessionInBackground(
         labelCandidates.length > 0 && labelCandidates.length < cluster.length
 
       if (!phase1HasCode && skippedSomeImages) {
-        const remaining = cluster.filter((c) => !labelCandidates.find((l) => l.id === c.id))
+        const remainingAll = cluster.filter(
+          (c) => !labelCandidates.find((l) => l.id === c.id),
+        )
+        // Earliest-first by capturedAt — labels are typically shot last, so the
+        // earliest PNGs are the wide product shots most likely to carry a
+        // printed code.
+        const remaining = remainingAll
+          .slice()
+          .sort((a, b) => (a.capturedAt?.getTime() ?? 0) - (b.capturedAt?.getTime() ?? 0))
+          .slice(0, PHASE2_CAP)
         log.info('phase 1 produced no code — running phase 2 fallback', {
           cluster_idx: cIdx,
           batch_id: batch.id,
           phase1_count: phase1Images.length,
           phase1_had_any_text: phase1HadAnyText,
+          phase2_eligible: remainingAll.length,
           phase2_count: remaining.length,
+          phase2_capped: remainingAll.length > remaining.length,
         })
-        const phase2Ocr = await runOcrOnImages(pool!, remaining, batch.id, sessionId, userId)
+        const phase2Ocr = await runOcrOnImages(
+          pool!,
+          remaining,
+          batch.id,
+          sessionId,
+          userId,
+          { skipBarcode: false },
+        )
         ocrRows = [...phase1Ocr, ...phase2Ocr]
         totalImagesOcrd += remaining.length
       }
@@ -366,18 +394,71 @@ async function processSessionInBackground(
  * multi-row insert at the end, return the inserted rows. Errors per-image are
  * logged + written to images.error_message + enqueued for retry.
  *
+ * Pipeline shape:
+ *   1. Prefetch all Supabase blobs in parallel with bounded concurrency. The
+ *      previous shape awaited a download inside each pool.map() worker, which
+ *      meant up to N workers (N = pool size) sat idle on HTTP every time. Now
+ *      a separate fetch fan-out runs in the background and workers consume
+ *      buffers as soon as they land.
+ *   2. pool.map runs recognizeWithFallback on the resolved buffer.
+ *
  * Per-image status updates ('ocr_processing' / 'ocr_done') and the per-image
- * `upload_batches.processed` counter were removed: with 300 images that adds up
- * to ~1500 Supabase round-trips for state nobody downstream reads in real time.
- * `processed` is set to cluster.length once per cluster by the caller when the
- * cluster transitions to 'awaiting_review' (see line ~290).
+ * `upload_batches.processed` counter were removed.
  */
+const DOWNLOAD_CONCURRENCY = 12
+
+interface RunOcrOptions {
+  /** Pass-through to recognizeWithFallback — see RecognizeOptions there. */
+  skipBarcode?: boolean
+}
+
+interface DownloadedImage {
+  image: ClusterImage
+  buffer: Buffer
+  mime: string
+}
+
+async function downloadAll(images: ClusterImage[]): Promise<Array<DownloadedImage | { image: ClusterImage; err: string }>> {
+  const db = getSupabaseAdminClient()
+  const out: Array<DownloadedImage | { image: ClusterImage; err: string }> = new Array(images.length)
+  let next = 0
+  const slots = Array.from(
+    { length: Math.min(DOWNLOAD_CONCURRENCY, images.length) },
+    async () => {
+      while (true) {
+        const idx = next++
+        if (idx >= images.length) return
+        const image = images[idx]
+        try {
+          const { data: blob, error } = await db.storage
+            .from('images')
+            .download(image.storage_path)
+          if (error || !blob) {
+            out[idx] = {
+              image,
+              err: `download failed for ${image.storage_path}: ${error?.message ?? 'no blob returned'}`,
+            }
+            continue
+          }
+          const ab = await blob.arrayBuffer()
+          out[idx] = { image, buffer: Buffer.from(ab), mime: blob.type || 'image/jpeg' }
+        } catch (err) {
+          out[idx] = { image, err: err instanceof Error ? err.message : String(err) }
+        }
+      }
+    },
+  )
+  await Promise.all(slots)
+  return out
+}
+
 async function runOcrOnImages(
   pool: TesseractPool,
   images: ClusterImage[],
   batchId: string,
   sessionId: string,
   userId: string,
+  options: RunOcrOptions = {},
 ): Promise<OcrRow[]> {
   if (images.length === 0) return []
 
@@ -401,21 +482,42 @@ async function runOcrOnImages(
   }
   const pending: PendingInsert[] = []
 
-  await pool.map(images, async (worker, image) => {
-    const tImg = Date.now()
-    try {
-      const { data: blob, error: dlError } = await db.storage
-        .from('images')
-        .download(image.storage_path)
-      if (dlError || !blob) {
-        throw new Error(
-          `download failed for ${image.storage_path}: ${dlError?.message ?? 'no blob returned'}`,
-        )
-      }
+  // Phase A: prefetch every blob in parallel. By the time the OCR pool starts
+  // map'ing, most/all buffers are already in memory — workers consume them
+  // back-to-back instead of stalling on Supabase HTTP for each image.
+  const tDl = Date.now()
+  const fetched = await downloadAll(images)
+  log.info('downloads complete', {
+    count: images.length,
+    dur_ms: Date.now() - tDl,
+  })
 
-      const ab = await blob.arrayBuffer()
-      const buffer = Buffer.from(ab)
-      const ocrResult = await recognizeWithFallback(worker, buffer, blob.type || 'image/jpeg')
+  // Phase B: OCR via the pool. Each item already has its buffer in hand.
+  await pool.map(fetched, async (worker, item) => {
+    const tImg = Date.now()
+    if ('err' in item) {
+      log.error('image download failed — enqueuing retry', {
+        image_id: item.image.id,
+        filename: item.image.filename,
+        err: item.err,
+      })
+      await db
+        .from('images')
+        .update({ status: 'failed', error_message: item.err })
+        .eq('id', item.image.id)
+      try {
+        await enqueueRetry('image', item.image.id, item.err)
+      } catch (e) {
+        log.warn('enqueueRetry failed', { image_id: item.image.id, err: e })
+      }
+      return
+    }
+
+    const { image, buffer, mime } = item
+    try {
+      const ocrResult = await recognizeWithFallback(worker, buffer, mime, {
+        skipBarcode: options.skipBarcode,
+      })
 
       pending.push({
         image_id: image.id,
@@ -445,7 +547,7 @@ async function runOcrOnImages(
           image_id: image.id,
           filename: image.filename,
           bytes: buffer.length,
-          mime: blob.type || 'image/jpeg',
+          mime,
         })
       } else if (!ocrResult.topCandidate && textLen > 30) {
         log.warn('Tesseract read text but extracted no code — extraction or label issue', {

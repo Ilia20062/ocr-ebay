@@ -24,10 +24,11 @@ export const POST = withCron(async (_req) => {
       const decryptedRefreshToken = decrypt(conn.refresh_token)
       const tokens = await refreshAccessToken(decryptedRefreshToken)
       const newExpiry = new Date(Date.now() + tokens.expires_in * 1000).toISOString()
+      const nextRefreshToken = tokens.refresh_token ?? decryptedRefreshToken
 
       await db.from('ebay_connections').update({
         access_token: encrypt(tokens.access_token),
-        refresh_token: encrypt(tokens.refresh_token),
+        refresh_token: encrypt(nextRefreshToken),
         token_expires_at: newExpiry,
       }).eq('id', conn.id)
 

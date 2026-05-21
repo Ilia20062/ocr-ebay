@@ -224,10 +224,30 @@ export default function ReviewQueue({ initialGroups, sessionId }: Props) {
               group={g}
               onSubmit={async (batchId, action, override) => {
                 const r = await handleReview(batchId, action, override)
-                if (r.success || r.discarded) {
+                // The server returns success=true even when it left the batch
+                // at awaiting_review (eBay search threw, no matches, draft
+                // failed). Only drop the card when the row actually advanced.
+                const advanced =
+                  r.discarded === true ||
+                  (r.searchResult === 'found' && r.listingResult?.success === true)
+                if (advanced) {
                   handleCardComplete(batchId)
                   // Invalidate the App Router client cache so /listings,
                   // /batches and /dashboard show the new row on next nav.
+                  router.refresh()
+                } else if (r.success) {
+                  // Card stays so the user can retry / override / discard.
+                  let msg: string
+                  if (r.searchResult === 'not_found') {
+                    msg = `No eBay match for "${g.finalCode ?? ''}". Try an override or discard.`
+                  } else if (r.searchResult === 'search_error') {
+                    msg = 'eBay search failed. Check your eBay connection and retry.'
+                  } else if (r.listingResult && !r.listingResult.success) {
+                    msg = `Draft creation failed: ${r.listingResult.error ?? 'unknown error'}`
+                  } else {
+                    msg = 'Approval saved but the batch is still in review. Retry or check logs.'
+                  }
+                  setOpError(msg)
                   router.refresh()
                 }
                 return r

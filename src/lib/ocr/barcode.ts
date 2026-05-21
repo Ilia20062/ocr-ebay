@@ -109,34 +109,21 @@ function isUsableBarcodeValue(value: string): boolean {
 }
 
 /**
- * Try to read a barcode out of an image buffer.
- *
- * Returns `null` on any of:
- *   - No barcode detected.
- *   - Decoded text fails the usability filter (URL, phone, etc.).
- *   - Decoder throws (NotFoundException from zxing is the normal case).
- *
- * Never throws.
+ * Decode a zxing barcode out of an already-laid-out RGBA buffer. Pure CPU,
+ * no sharp call. Used when the OCR preprocess pipeline has already produced
+ * pixels so we don't decode the same JPEG twice.
  */
-export async function scanBarcode(buffer: Buffer): Promise<BarcodeHit | null> {
-  const t0 = Date.now()
+function decodeRgba(
+  rgba: Buffer,
+  width: number,
+  height: number,
+  t0: number,
+): BarcodeHit | null {
   try {
-    // Step 1: decode + resize to RGBA via sharp.
-    const { data, info } = await sharp(buffer)
-      .rotate() // honor EXIF orientation
-      .resize({ width: TARGET_WIDTH, withoutEnlargement: true })
-      .ensureAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true })
-
-    // Step 2: pack into zxing's expected ARGB layout and wrap in a binary bitmap.
-    const packed = rgbaToArgb(data)
-    const luminance = new RGBLuminanceSource(packed, info.width, info.height)
+    const packed = rgbaToArgb(rgba)
+    const luminance = new RGBLuminanceSource(packed, width, height)
     const binary = new BinaryBitmap(new HybridBinarizer(luminance))
-
-    // Step 3: decode.
-    const reader = makeReader()
-    const result = reader.decode(binary)
+    const result = makeReader().decode(binary)
     const text = result.getText()
     const formatName = BarcodeFormat[result.getBarcodeFormat()] ?? 'UNKNOWN'
 
@@ -158,8 +145,47 @@ export async function scanBarcode(buffer: Buffer): Promise<BarcodeHit | null> {
     })
     return { code: text.trim(), format: formatName }
   } catch (err) {
-    // zxing throws NotFoundException when there's no barcode — the common
-    // case for product photos. Don't log every miss.
+    const msg = err instanceof Error ? err.message : String(err)
+    if (!/notfound/i.test(msg)) {
+      log.debug('barcode decode threw (non-NotFound)', {
+        scope: 'ocr.barcode',
+        err: msg,
+        dur_ms: Date.now() - t0,
+      })
+    }
+    return null
+  }
+}
+
+/**
+ * Fast path: caller already has pre-decoded RGBA pixels. No sharp work.
+ */
+export function scanBarcodeFromRgba(
+  rgba: Buffer,
+  width: number,
+  height: number,
+): BarcodeHit | null {
+  return decodeRgba(rgba, width, height, Date.now())
+}
+
+/**
+ * Try to read a barcode out of an image buffer. Sharp-decodes the input —
+ * use scanBarcodeFromRgba when you already have RGBA in hand.
+ *
+ * Never throws.
+ */
+export async function scanBarcode(buffer: Buffer): Promise<BarcodeHit | null> {
+  const t0 = Date.now()
+  try {
+    const { data, info } = await sharp(buffer)
+      .rotate()
+      .resize({ width: TARGET_WIDTH, withoutEnlargement: true })
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true })
+
+    return decodeRgba(data, info.width, info.height, t0)
+  } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     if (!/notfound/i.test(msg)) {
       log.debug('barcode decode threw (non-NotFound)', {

@@ -1,6 +1,8 @@
 export interface EbayTokenResponse {
   access_token: string
-  refresh_token: string
+  // Omitted by eBay on routine refreshes — only re-issued near the refresh
+  // token's own ~18-month expiry. Callers must fall back to the existing one.
+  refresh_token?: string
   expires_in: number
   token_type: string
 }
@@ -42,6 +44,9 @@ export interface EbayOffer {
   format: 'FIXED_PRICE'
   availableQuantity: number
   categoryId: string
+  // Required by the Sell API to resolve `Item.Country` — omitting this
+  // surfaces as `errorId=25002 "No <Item.Country> exists"` on publish.
+  merchantLocationKey: string
   listingPolicies: {
     fulfillmentPolicyId: string
     paymentPolicyId: string

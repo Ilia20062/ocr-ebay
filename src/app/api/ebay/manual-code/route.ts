@@ -31,7 +31,13 @@ export async function POST(req: NextRequest) {
 
     // Exchange the manually submitted code for a real access token
     const tokens = await exchangeCodeForTokens(cleanCode)
-    
+    if (!tokens.refresh_token) {
+      return NextResponse.json(
+        { error: 'eBay did not return a refresh token. Re-authorize the app from scratch.' },
+        { status: 502 },
+      )
+    }
+
     // Save to database
     await saveConnection(user.id, tokens.access_token, tokens.refresh_token, tokens.expires_in)
 

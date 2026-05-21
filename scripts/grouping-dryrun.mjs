@@ -132,6 +132,45 @@ function isObviousScrap(c) {
   return false
 }
 
+// Keep in sync with src/lib/ocr/code-extractor.ts:CODE_TOKEN_REGEX
+const CODE_TOKEN_RE = /[A-Z0-9][A-Z0-9\-/.+]*/g
+
+// Reconstruct candidates split by stray OCR spaces (e.g. "BR 23156" → "BR23156")
+function reconstructJoined(norm) {
+  const tokens = [...norm.matchAll(CODE_TOKEN_RE)].map(m => m[0])
+  if (tokens.length < 2) return []
+  const out = []
+  const seen = new Set()
+  for (let n = 2; n <= 3; n++) {
+    for (let i = 0; i + n <= tokens.length; i++) {
+      const joined = tokens.slice(i, i + n).join('')
+      if (joined.length < 6 || joined.length > 25) continue
+      if (!/[A-Z]/.test(joined) || !/\d/.test(joined)) continue
+      if (seen.has(joined)) continue
+      seen.add(joined)
+      out.push(joined)
+    }
+  }
+  return out
+}
+
+function scoreCode(code) {
+  if (!/\d/.test(code)) return 0
+  if (isWatermark(code)) return 0
+  if (isObviousScrap(code)) return 0
+  if (code.length < 6) return 0
+  const hasLetter = /[A-Z]/.test(code)
+  const length = code.length
+  let score = 0.4
+  if (hasLetter) score += 0.2
+  if (length >= 8 && length <= 16) score += 0.2
+  else if (length >= 6 && length < 8) score += 0.1
+  else if (length > 20) score -= 0.1
+  if (/[-/]/.test(code)) score += 0.05
+  if (/\+/.test(code)) score += 0.05
+  return Math.max(0, Math.min(score, 0.85))
+}
+
 function extractCandidates(text) {
   if (!text) return []
   const norm = text.toUpperCase().replace(/[^\x20-\x7E]/g, ' ').replace(/\s+/g, ' ')
@@ -141,20 +180,14 @@ function extractCandidates(text) {
     const code = m[1]
     if (seen.has(code)) continue
     seen.add(code)
-    if (!/\d/.test(code)) continue
-    if (isWatermark(code)) continue
-    if (isObviousScrap(code)) continue
-    if (code.length < 6) continue
-    const hasLetter = /[A-Z]/.test(code)
-    const length = code.length
-    let score = 0.4
-    if (hasLetter) score += 0.2
-    if (length >= 8 && length <= 16) score += 0.2
-    else if (length >= 6 && length < 8) score += 0.1
-    else if (length > 20) score -= 0.1
-    if (/[-/]/.test(code)) score += 0.05
-    if (/\+/.test(code)) score += 0.05
-    out.push({ text: code, confidence: Math.max(0, Math.min(score, 0.85)) })
+    const score = scoreCode(code)
+    if (score > 0) out.push({ text: code, confidence: score })
+  }
+  for (const joined of reconstructJoined(norm)) {
+    if (seen.has(joined)) continue
+    seen.add(joined)
+    const score = scoreCode(joined)
+    if (score > 0) out.push({ text: joined, confidence: Math.max(0, score - 0.05) })
   }
   return out.sort((a, b) => b.confidence - a.confidence)
 }

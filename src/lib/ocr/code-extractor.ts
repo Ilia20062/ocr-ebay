@@ -49,6 +49,44 @@ export function isWatermark(code: string): boolean {
   return false
 }
 
+// Single token of code-like characters used to reconstruct part numbers that
+// OCR split across whitespace ("BR 23156" → join → "BR23156"). Allowed chars
+// match the body of PART_NUMBER_REGEX; we DO require ≥1 char here because the
+// regex emits empty captures otherwise.
+const CODE_TOKEN_REGEX = /[A-Z0-9][A-Z0-9\-\/\.\+]*/g
+
+/**
+ * OCR engines often insert spurious spaces inside embossed/stencilled part
+ * numbers — e.g. "BR  23156", "10K  PE-94", "B R 23156". The contiguous-only
+ * PART_NUMBER_REGEX skips those.
+ *
+ * This pass collects code-like tokens and emits the joined string for every
+ * 2- and 3-token window that contains at least one letter and one digit and
+ * lands in the 6-25 char band. Scoring still gets the final word.
+ */
+function reconstructJoinedCandidates(normalized: string): string[] {
+  const tokens = [...normalized.matchAll(CODE_TOKEN_REGEX)].map((m) => m[0])
+  if (tokens.length < 2) return []
+
+  const out: string[] = []
+  const seen = new Set<string>()
+
+  for (let windowSize = 2; windowSize <= 3; windowSize++) {
+    for (let i = 0; i + windowSize <= tokens.length; i++) {
+      const window = tokens.slice(i, i + windowSize)
+      const joined = window.join('')
+      if (joined.length < 6 || joined.length > 25) continue
+      // A real PN has both letters and digits; pure-numeric joins are usually
+      // dates / lot indexes (the barcode pre-pass already owns true numerics).
+      if (!/[A-Z]/.test(joined) || !/\d/.test(joined)) continue
+      if (seen.has(joined)) continue
+      seen.add(joined)
+      out.push(joined)
+    }
+  }
+  return out
+}
+
 export function extractCandidates(text: string): OcrCandidate[] {
   if (!text) return []
 
@@ -64,10 +102,21 @@ export function extractCandidates(text: string): OcrCandidate[] {
     if (seen.has(code)) continue
     seen.add(code)
 
-    // Score heuristic: longer alphanumeric codes with mixed digits are more likely part numbers
     const score = scoreCandidate(code)
     if (score > 0) {
       candidates.push({ text: code, confidence: score })
+    }
+  }
+
+  // Whitespace-recovery pass: reconstruct codes the regex missed because OCR
+  // inserted stray spaces. Joined candidates score slightly lower so a clean
+  // contiguous read always wins over a reconstructed one.
+  for (const joined of reconstructJoinedCandidates(normalized)) {
+    if (seen.has(joined)) continue
+    seen.add(joined)
+    const score = scoreCandidate(joined)
+    if (score > 0) {
+      candidates.push({ text: joined, confidence: Math.max(0, score - 0.05) })
     }
   }
 

@@ -26,6 +26,9 @@ export async function GET(req: NextRequest) {
 
   try {
     const tokens = await exchangeCodeForTokens(code)
+    if (!tokens.refresh_token) {
+      return NextResponse.redirect(`${appUrl}/settings/ebay?error=no_refresh_token`)
+    }
     await saveConnection(user.id, tokens.access_token, tokens.refresh_token, tokens.expires_in)
     return NextResponse.redirect(`${appUrl}/settings/ebay?connected=true`)
   } catch {

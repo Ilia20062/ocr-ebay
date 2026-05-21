@@ -101,6 +101,6 @@ Status enums are in `src/types/database.ts` — keep these in sync with migratio
 
 ### Deployment
 
-- **Vercel** is primary (`vercel.json` defines the two crons). `NEXT_PUBLIC_APP_URL`, `EBAY_CLIENT_ID/SECRET/RUNAME`, `EBAY_ENVIRONMENT` (`sandbox|production`), `EBAY_MARKETPLACE_ID`, `ENCRYPTION_KEY` (64 hex chars), `CRON_SECRET`, `OPENROUTER_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` are required at minimum. Optional: `PADDLE_OCR_URL` + `PADDLE_OCR_TOKEN` (PaddleOCR sidecar), `GOOGLE_VISION_API_KEY` (Vision fallback).
+- **Vercel** is primary (`vercel.json` defines the two crons). `NEXT_PUBLIC_APP_URL`, `EBAY_CLIENT_ID/SECRET/RUNAME`, `EBAY_ENVIRONMENT` (`sandbox|production`), `EBAY_MARKETPLACE_ID`, `EBAY_LOCATION_COUNTRY`, `EBAY_LOCATION_POSTAL_CODE` (auto-creates the inventory location on first publish; optional: `EBAY_LOCATION_KEY` / `_CITY` / `_STATE` / `_ADDRESS_LINE1` / `_NAME`), `ENCRYPTION_KEY` (64 hex chars), `CRON_SECRET`, `OPENROUTER_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` are required at minimum. Optional: `PADDLE_OCR_URL` + `PADDLE_OCR_TOKEN` (PaddleOCR sidecar), `GOOGLE_VISION_API_KEY` (Vision fallback).
 - **Railway** config exists (`railway.json`) as an alternative — uses `npm run start` with `PORT` injected.
 - `next.config.ts` whitelists `*.supabase.co/storage/v1/object/sign/**` for `next/image`.

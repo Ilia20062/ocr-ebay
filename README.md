@@ -112,6 +112,22 @@ EBAY_RUNAME=<runame>
 EBAY_ENVIRONMENT=sandbox          # sandbox | production
 EBAY_MARKETPLACE_ID=EBAY_US
 
+# Inventory location used for every offer (Sell API needs an Item.Country).
+# Auto-created on first publish if the seller has no location yet.
+EBAY_LOCATION_KEY=default-warehouse
+EBAY_LOCATION_COUNTRY=US          # 2-letter ISO code
+EBAY_LOCATION_POSTAL_CODE=95125
+EBAY_LOCATION_CITY=San Jose       # optional
+EBAY_LOCATION_STATE=CA            # optional
+EBAY_LOCATION_ADDRESS_LINE1=      # optional
+EBAY_LOCATION_NAME=Default Warehouse  # optional
+
+# Last-resort category when Taxonomy suggestions are all rejected by eBay —
+# typically because every suggestion lands in eBay Motors and the seller
+# isn't enrolled. Set to a non-Motors leaf you're permitted to list in.
+# 99 = "Everything Else > Other" (broadly accepted, low visibility).
+EBAY_FALLBACK_CATEGORY_ID=
+
 # ── Security ────────────────────────────────────────────────────────────
 ENCRYPTION_KEY=<64 hex chars>     # openssl rand -hex 32
 CRON_SECRET=<random string>

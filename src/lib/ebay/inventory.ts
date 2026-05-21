@@ -1,5 +1,6 @@
 import { createEbayClient, isEbayErrorCode } from './client'
 import { describeEbayError } from './error'
+import { getOrCreateMerchantLocationKey } from './location'
 import { withContext } from '@/lib/log'
 import type { EbayInventoryItem, EbayOffer } from '@/types/ebay'
 
@@ -109,6 +110,7 @@ export async function createOffer(userId: string, offer: EbayOffer): Promise<str
   log.info('Creating offer', {
     category_id: offer.categoryId,
     marketplace: offer.marketplaceId,
+    merchant_location_key: offer.merchantLocationKey,
     price: offer.pricingSummary?.price?.value,
     currency: offer.pricingSummary?.price?.currency,
     quantity: offer.availableQuantity,
@@ -236,12 +238,18 @@ export async function createAndPublishListing(
 
   await createOrUpdateInventoryItem(userId, sku, inventoryItem)
 
+  // Resolve (or auto-create) the seller's inventory location. Without this
+  // the Sell API rejects the offer with errorId=25002 "No <Item.Country>".
+  const merchantLocationKey = await getOrCreateMerchantLocationKey(userId)
+  log.info('Resolved merchantLocationKey', { merchant_location_key: merchantLocationKey })
+
   const offer: EbayOffer = {
     sku,
     marketplaceId: process.env.EBAY_MARKETPLACE_ID ?? 'EBAY_US',
     format: 'FIXED_PRICE',
     availableQuantity: quantity,
     categoryId,
+    merchantLocationKey,
     listingPolicies: { fulfillmentPolicyId, paymentPolicyId, returnPolicyId },
     pricingSummary: { price: { value: price.toFixed(2), currency } },
   }

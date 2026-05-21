@@ -82,7 +82,9 @@ export async function getFreshAccessToken(userId: string): Promise<string> {
 
   // Token is expiring — refresh it. saveConnection will refresh the cache.
   const tokens = await refreshAccessToken(connection.refresh_token)
-  await saveConnection(userId, tokens.access_token, tokens.refresh_token, tokens.expires_in)
+  // eBay omits refresh_token on routine refreshes; keep the existing one.
+  const nextRefreshToken = tokens.refresh_token ?? connection.refresh_token
+  await saveConnection(userId, tokens.access_token, nextRefreshToken, tokens.expires_in)
   return tokens.access_token
 }
 
