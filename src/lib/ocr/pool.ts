@@ -174,13 +174,26 @@ export class TesseractPool {
 }
 
 /**
- * Module-level singleton pool. Survives across upload sessions so the
- * ~5-10s worker init + langdata download is paid exactly once per Node
- * process, not once per upload. Lazy-init on first use; concurrent first
- * callers share a single in-flight init promise.
+ * Singleton pool stored on `globalThis`, NOT module scope.
+ *
+ * Why globalThis: Next.js dev mode hot-reloads modules — every edit nulls
+ * module-scope `let` bindings while the previously-created Tesseract worker
+ * processes keep running. Over a few HMR cycles you accumulate dozens of
+ * orphaned workers piping to stdout/stderr, which exhausts SyncWriteStream
+ * listeners (`MaxListenersExceededWarning: 11 unpipe listeners added`) and
+ * eventually causes Next's compilation workers to crash with
+ * `Jest worker encountered child process exceptions`. Storing the pool on
+ * `globalThis` survives HMR so we re-use exactly one pool per Node process.
  */
-let sharedPool: TesseractPool | null = null
-let sharedPoolInit: Promise<TesseractPool> | null = null
+const POOL_GLOBAL_KEY = Symbol.for('ocr-crm.tesseract-pool')
+const INIT_GLOBAL_KEY = Symbol.for('ocr-crm.tesseract-pool-init')
+
+type PoolGlobal = typeof globalThis & {
+  [POOL_GLOBAL_KEY]?: TesseractPool | null
+  [INIT_GLOBAL_KEY]?: Promise<TesseractPool> | null
+}
+
+const globalForPool = globalThis as PoolGlobal
 
 function readPoolSize(): number {
   const raw = process.env.OCR_CONCURRENCY
@@ -194,22 +207,37 @@ function readPoolSize(): number {
 }
 
 export async function getSharedTesseractPool(): Promise<TesseractPool> {
-  if (sharedPool) return sharedPool
-  if (sharedPoolInit) return sharedPoolInit
+  const existing = globalForPool[POOL_GLOBAL_KEY]
+  if (existing) return existing
+  const inflight = globalForPool[INIT_GLOBAL_KEY]
+  if (inflight) return inflight
+
   const size = readPoolSize()
-  sharedPoolInit = (async () => {
+  // Node's default per-EventEmitter cap is 10. With N Tesseract worker child
+  // processes piping to stdout/stderr plus Next's own compile workers, we
+  // routinely exceed that during dev and produce noisy warnings. Bump the
+  // cap on the relevant streams so they don't false-positive as leaks.
+  try {
+    process.stdout.setMaxListeners(Math.max(20, size * 4))
+    process.stderr.setMaxListeners(Math.max(20, size * 4))
+  } catch {
+    // setMaxListeners isn't critical — proceed if the stream rejects it.
+  }
+
+  const init = (async () => {
     const p = new TesseractPool(size)
     try {
       await p.init()
     } catch (err) {
-      sharedPoolInit = null
+      globalForPool[INIT_GLOBAL_KEY] = null
       throw err
     }
-    sharedPool = p
-    sharedPoolInit = null
+    globalForPool[POOL_GLOBAL_KEY] = p
+    globalForPool[INIT_GLOBAL_KEY] = null
     return p
   })()
-  return sharedPoolInit
+  globalForPool[INIT_GLOBAL_KEY] = init
+  return init
 }
 
 /**
@@ -331,16 +359,28 @@ export async function recognizeWithFallback(
   }
 
   // High-confidence primary hit → return immediately, skip Vision call.
-  if (primaryResult?.topCandidate && primaryResult.topCandidate.confidence >= 0.55) {
+  //
+  // 0.85 is the cap of scoreCandidate's heuristic alone — so anything ≥0.85
+  // must have been boosted by a real OCR word-confidence read (the average of
+  // heuristic + wordConf in selectTopCandidate). That's the only condition
+  // under which we trust primary enough to skip Vision. The previous threshold
+  // (0.55) let pure-heuristic scores on garbage like "SER3SAAS" pre-empt
+  // Vision, which is exactly what made molded-code OCR regress.
+  if (primaryResult?.topCandidate && primaryResult.topCandidate.confidence >= 0.85) {
     return primaryResult
   }
 
   // 2) Vision fallback — covers primary returning empty, no candidates, or
   //    weak candidates the user is unlikely to be happy with.
+  //
+  // Vision is fed the ORIGINAL buffer (not the 1200px downscale). Phone-photo
+  // molded codes need every available pixel to resolve the engraving, and
+  // Vision charges per call (not per pixel) with its own internal scaling.
+  // Feeding it the downscaled image was the second half of the OCR regression.
   if (visionEnabled) {
     const visionStart = Date.now()
     try {
-      const visionResult = await runGoogleVisionOcr(processedJpeg.toString('base64'), processedMime)
+      const visionResult = await runGoogleVisionOcr(buffer.toString('base64'), mimeType)
       log.info('Vision fallback ran', {
         scope: 'ocr.recognize',
         text_len: visionResult.extractedText.length,

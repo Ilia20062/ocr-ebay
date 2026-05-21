@@ -193,3 +193,225 @@ AxiosError: Request failed with status code 403
  GET /review?session=43250a34-0922-4510-86f5-94b702099239 200 in 541ms (next.js: 144ms, application-code: 398ms)
  GET /review?session=43250a34-0922-4510-86f5-94b702099239 200 in 249ms (next.js: 4ms, application-code: 245ms)
  GET /review?session=43250a34-0922-4510-86f5-94b702099239 200 in 115ms (next.js: 4ms, application-code: 112ms)
+ GET /review?session=43250a34-0922-4510-86f5-94b702099239 200 in 302ms (next.js: 151ms, application-code: 151ms)
+ GET /upload 200 in 41ms (next.js: 18ms, application-code: 23ms)
+[15:47:06.331] [INF] session created scope=session.create user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=979c516e-9950-4881-ae94-1dfa85ab3f45
+ POST /api/upload-sessions 201 in 1493ms (next.js: 208ms, application-code: 1285ms)
+⨯ Failed to generate static paths for /api/upload-sessions/[id]/images/presign:
+Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError'
+}
+⨯ Failed to generate static paths for /api/upload-sessions/[id]/images/presign:
+Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError'
+}
+⨯ Failed to generate static paths for /api/upload-sessions/[id]/images/presign:
+Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError'
+}
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/979c516e-9950-4881-ae94-1dfa85ab3f45/images/presign'
+}
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/979c516e-9950-4881-ae94-1dfa85ab3f45/images/presign'
+}
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/979c516e-9950-4881-ae94-1dfa85ab3f45/images/presign'
+}
+ POST /api/upload-sessions/979c516e-9950-4881-ae94-1dfa85ab3f45/images/presign 201 in 1058ms (next.js: 43ms, application-code: 1016ms)
+ POST /api/upload-sessions/979c516e-9950-4881-ae94-1dfa85ab3f45/images/presign 201 in 1068ms (next.js: 50ms, application-code: 1018ms)
+ POST /api/upload-sessions/979c516e-9950-4881-ae94-1dfa85ab3f45/images/presign 201 in 1023ms (next.js: 19ms, application-code: 1004ms)
+(node:86772) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 unpipe listeners added to [SyncWriteStream]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:86772) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 error listeners added to [SyncWriteStream]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+(node:86772) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 close listeners added to [SyncWriteStream]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+(node:86772) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 finish listeners added to [SyncWriteStream]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+(node:86772) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 unpipe listeners added to [SyncWriteStream]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+(node:86772) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 error listeners added to [SyncWriteStream]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+(node:86772) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 close listeners added to [SyncWriteStream]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+(node:86772) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 finish listeners added to [SyncWriteStream]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/979c516e-9950-4881-ae94-1dfa85ab3f45/images/presign'
+}
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/979c516e-9950-4881-ae94-1dfa85ab3f45/images/presign'
+}
+ POST /api/upload-sessions/979c516e-9950-4881-ae94-1dfa85ab3f45/images/presign 500 in 1686ms (next.js: 1354ms, application-code: 332ms)
+ POST /api/upload-sessions/979c516e-9950-4881-ae94-1dfa85ab3f45/images/presign 500 in 1723ms (next.js: 1640ms, application-code: 83ms)
+ POST /api/upload-sessions/979c516e-9950-4881-ae94-1dfa85ab3f45/images/presign 500 in 658ms (next.js: 588ms, application-code: 70ms)
+ POST /api/upload-sessions/979c516e-9950-4881-ae94-1dfa85ab3f45/images/presign 500 in 1689ms (next.js: 1633ms, application-code: 56ms)
+ POST /api/upload-sessions/979c516e-9950-4881-ae94-1dfa85ab3f45/images/presign 500 in 619ms (next.js: 575ms, application-code: 45ms)
+[browser] [15:47:08.142] [ERR] upload flow failed scope=client.upload dur_ms=3305 err="Failed to get upload URL for 2026-04-07 15.23.42_00001_.png: HTTP 500" 
+    at emit (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:248:17)
+    at Object.error (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:276:28)
+    at UploadSessionProvider.useCallback[startUpload] (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:596:23) (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:248:17)
+[browser] Error: Failed to get upload URL for 2026-04-07 15.23.42_00001_.png: HTTP 500
+    at uploadOne (http://localhost:3000/_next/static/chunks/src_02x-cnq._.js:523:31)
+    at async UploadSessionProvider.useCallback[startUpload].workers (http://localhost:3000/_next/static/chunks/src_02x-cnq._.js:557:29)
+    at async Promise.all (index 5)
+    at async UploadSessionProvider.useCallback[startUpload] (http://localhost:3000/_next/static/chunks/src_02x-cnq._.js:561:17) 
+    at emit (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:249:64)
+    at Object.error (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:276:28)
+    at UploadSessionProvider.useCallback[startUpload] (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:596:23) (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:249:64)
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/979c516e-9950-4881-ae94-1dfa85ab3f45/images/presign'
+}
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/979c516e-9950-4881-ae94-1dfa85ab3f45/images/presign'
+}
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/979c516e-9950-4881-ae94-1dfa85ab3f45/images/presign'
+}
+ POST /api/upload-sessions/979c516e-9950-4881-ae94-1dfa85ab3f45/images/presign 500 in 216ms (next.js: 143ms, application-code: 73ms)
+ POST /api/upload-sessions/979c516e-9950-4881-ae94-1dfa85ab3f45/images/presign 500 in 216ms (next.js: 152ms, application-code: 64ms)
+ POST /api/upload-sessions/979c516e-9950-4881-ae94-1dfa85ab3f45/images/presign 500 in 216ms (next.js: 162ms, application-code: 54ms)
+ GET /upload 200 in 657ms (next.js: 182ms, application-code: 475ms)
+ GET /upload 200 in 511ms (next.js: 155ms, application-code: 356ms)
+ GET /upload 200 in 611ms (next.js: 215ms, application-code: 395ms)
+ GET /upload 200 in 485ms (next.js: 151ms, application-code: 335ms)
+ GET /upload 200 in 470ms (next.js: 151ms, application-code: 319ms)
+[15:52:22.467] [INF] session created scope=session.create user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=3ecd442a-ad5b-4404-81c8-83259f672817
+ POST /api/upload-sessions 201 in 1019ms (next.js: 213ms, application-code: 805ms)
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/3ecd442a-ad5b-4404-81c8-83259f672817/images/presign'
+}
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/3ecd442a-ad5b-4404-81c8-83259f672817/images/presign'
+}
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/3ecd442a-ad5b-4404-81c8-83259f672817/images/presign'
+}
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/3ecd442a-ad5b-4404-81c8-83259f672817/images/presign'
+}
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/3ecd442a-ad5b-4404-81c8-83259f672817/images/presign'
+}
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/3ecd442a-ad5b-4404-81c8-83259f672817/images/presign'
+}
+ POST /api/upload-sessions/3ecd442a-ad5b-4404-81c8-83259f672817/images/presign 500 in 540ms (next.js: 412ms, application-code: 128ms)
+ POST /api/upload-sessions/3ecd442a-ad5b-4404-81c8-83259f672817/images/presign 500 in 540ms (next.js: 432ms, application-code: 109ms)
+ POST /api/upload-sessions/3ecd442a-ad5b-4404-81c8-83259f672817/images/presign 500 in 540ms (next.js: 448ms, application-code: 93ms)
+ POST /api/upload-sessions/3ecd442a-ad5b-4404-81c8-83259f672817/images/presign 500 in 540ms (next.js: 457ms, application-code: 83ms)
+ POST /api/upload-sessions/3ecd442a-ad5b-4404-81c8-83259f672817/images/presign 500 in 540ms (next.js: 466ms, application-code: 74ms)
+ POST /api/upload-sessions/3ecd442a-ad5b-4404-81c8-83259f672817/images/presign 500 in 540ms (next.js: 479ms, application-code: 61ms)
+[browser] [15:52:23.157] [ERR] upload flow failed scope=client.upload dur_ms=1784 err="Failed to get upload URL for 2026-04-07 15.23.34_00001_.png: HTTP 500" 
+    at emit (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:248:17)
+    at Object.error (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:276:28)
+    at UploadSessionProvider.useCallback[startUpload] (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:596:23) (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:248:17)
+[browser] Error: Failed to get upload URL for 2026-04-07 15.23.34_00001_.png: HTTP 500
+    at uploadOne (http://localhost:3000/_next/static/chunks/src_02x-cnq._.js:523:31)
+    at async UploadSessionProvider.useCallback[startUpload].workers (http://localhost:3000/_next/static/chunks/src_02x-cnq._.js:557:29)
+    at async Promise.all (index 0)
+    at async UploadSessionProvider.useCallback[startUpload] (http://localhost:3000/_next/static/chunks/src_02x-cnq._.js:561:17) 
+    at emit (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:249:64)
+    at Object.error (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:276:28)
+    at UploadSessionProvider.useCallback[startUpload] (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:596:23) (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:249:64)
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/3ecd442a-ad5b-4404-81c8-83259f672817/images/presign'
+}
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/3ecd442a-ad5b-4404-81c8-83259f672817/images/presign'
+}
+ POST /api/upload-sessions/3ecd442a-ad5b-4404-81c8-83259f672817/images/presign 500 in 316ms (next.js: 237ms, application-code: 79ms)
+ POST /api/upload-sessions/3ecd442a-ad5b-4404-81c8-83259f672817/images/presign 500 in 315ms (next.js: 245ms, application-code: 70ms)
+ GET /upload 200 in 1631ms (next.js: 48ms, application-code: 1583ms)
+[15:52:37.216] [INF] session created scope=session.create user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=f500c459-9d16-4303-ae91-8548d088c3e2
+ POST /api/upload-sessions 201 in 1173ms (next.js: 43ms, application-code: 1130ms)
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/f500c459-9d16-4303-ae91-8548d088c3e2/images/presign'
+}
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/f500c459-9d16-4303-ae91-8548d088c3e2/images/presign'
+}
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/f500c459-9d16-4303-ae91-8548d088c3e2/images/presign'
+}
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/f500c459-9d16-4303-ae91-8548d088c3e2/images/presign'
+}
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/f500c459-9d16-4303-ae91-8548d088c3e2/images/presign'
+}
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/f500c459-9d16-4303-ae91-8548d088c3e2/images/presign'
+}
+ POST /api/upload-sessions/f500c459-9d16-4303-ae91-8548d088c3e2/images/presign 500 in 1297ms (next.js: 840ms, application-code: 457ms)
+ POST /api/upload-sessions/f500c459-9d16-4303-ae91-8548d088c3e2/images/presign 500 in 1299ms (next.js: 886ms, application-code: 413ms)
+ POST /api/upload-sessions/f500c459-9d16-4303-ae91-8548d088c3e2/images/presign 500 in 1297ms (next.js: 909ms, application-code: 388ms)
+ POST /api/upload-sessions/f500c459-9d16-4303-ae91-8548d088c3e2/images/presign 500 in 1296ms (next.js: 935ms, application-code: 362ms)
+ POST /api/upload-sessions/f500c459-9d16-4303-ae91-8548d088c3e2/images/presign 500 in 1294ms (next.js: 960ms, application-code: 334ms)
+ POST /api/upload-sessions/f500c459-9d16-4303-ae91-8548d088c3e2/images/presign 500 in 1296ms (next.js: 1010ms, application-code: 286ms)
+[browser] [15:52:39.213] [ERR] upload flow failed scope=client.upload dur_ms=3279 err="Failed to get upload URL for 2026-04-07 15.23.34_1_00001_.png: HTTP 500" 
+    at emit (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:248:17)
+    at Object.error (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:276:28)
+    at UploadSessionProvider.useCallback[startUpload] (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:596:23) (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:248:17)
+[browser] Error: Failed to get upload URL for 2026-04-07 15.23.34_1_00001_.png: HTTP 500
+    at uploadOne (http://localhost:3000/_next/static/chunks/src_02x-cnq._.js:523:31)
+    at async UploadSessionProvider.useCallback[startUpload].workers (http://localhost:3000/_next/static/chunks/src_02x-cnq._.js:557:29)
+    at async Promise.all (index 1)
+    at async UploadSessionProvider.useCallback[startUpload] (http://localhost:3000/_next/static/chunks/src_02x-cnq._.js:561:17) 
+    at emit (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:249:64)
+    at Object.error (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:276:28)
+    at UploadSessionProvider.useCallback[startUpload] (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:596:23) (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/src_02x-cnq._.js:249:64)
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/f500c459-9d16-4303-ae91-8548d088c3e2/images/presign'
+}
+⨯ Error: Jest worker encountered 2 child process exceptions, exceeding retry limit
+    at ignore-listed frames {
+  type: 'WorkerError',
+  page: '/api/upload-sessions/f500c459-9d16-4303-ae91-8548d088c3e2/images/presign'
+}
+ POST /api/upload-sessions/f500c459-9d16-4303-ae91-8548d088c3e2/images/presign 500 in 422ms (next.js: 310ms, application-code: 112ms)
+ POST /api/upload-sessions/f500c459-9d16-4303-ae91-8548d088c3e2/images/presign 500 in 422ms (next.js: 319ms, application-code: 103ms)
+[?25h

@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server'
 import { withAuth, apiError } from '@/lib/middleware'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
 export const GET = withAuth(async (_req, userId, params) => {
   const sessionId = params!.id
   const db = getSupabaseAdminClient()

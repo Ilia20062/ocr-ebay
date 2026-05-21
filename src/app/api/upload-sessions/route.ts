@@ -4,6 +4,9 @@ import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { createSessionSchema } from '@/lib/validators/upload'
 import { withContext } from '@/lib/log'
 
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
 export const POST = withAuth(async (req, userId) => {
   const log = withContext({ scope: 'session.create', user_id: userId })
 

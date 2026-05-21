@@ -5,6 +5,14 @@ import { sessionPresignSchema } from '@/lib/validators/upload'
 import { parseCapturedAt } from '@/lib/grouping/timestamp'
 import { withContext } from '@/lib/log'
 
+// Disable static-path generation. Next 16 / Turbopack otherwise tries to
+// pre-render dynamic `[id]` segments and the compilation workers crash with
+// "Jest worker encountered child process exceptions" → upload POSTs 500.
+// This route is per-request (auth + DB writes + signed-URL mint), never
+// static.
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
 export const POST = withAuth(async (req, userId, params) => {
   const sessionId = params!.id
   const log = withContext({ scope: 'session.presign', user_id: userId, session_id: sessionId })

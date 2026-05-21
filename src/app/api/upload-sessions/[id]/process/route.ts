@@ -6,6 +6,10 @@ import {
   recognizeWithFallback,
   getSharedTesseractPool,
 } from '@/lib/ocr/pool'
+
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+export const maxDuration = 300
 import { resolveGroupCode } from '@/lib/ocr/group-resolver'
 import {
   userHasEbayConnection,
