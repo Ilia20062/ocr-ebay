@@ -8,3 +8,188 @@
 - Environments: .env
 ✓ Ready in 795ms
 
+Error [AuthApiError]: Invalid Refresh Token: Refresh Token Not Found
+    at ignore-listed frames {
+  __isAuthError: true,
+  status: 400,
+  code: 'refresh_token_not_found'
+}
+Error [AuthApiError]: Invalid Refresh Token: Refresh Token Not Found
+    at ignore-listed frames {
+  __isAuthError: true,
+  status: 400,
+  code: 'refresh_token_not_found'
+}
+ GET / 307 in 1834ms (next.js: 493ms, application-code: 1340ms)
+ GET /login 200 in 288ms (next.js: 55ms, application-code: 233ms)
+[browser] AuthApiError: Invalid Refresh Token: Refresh Token Not Found
+    at handleError (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/node_modules_06uga_o._.js:16916:11)
+    at async _handleRequest (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/node_modules_06uga_o._.js:16966:9)
+    at async _request (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/node_modules_06uga_o._.js:16946:18)
+    at async (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/node_modules_06uga_o._.js:23511:24)
+    at async (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/node_modules_06uga_o._.js:16666:36) (file://D:/OCR Project/ocr-crm/.next/dev/static/chunks/node_modules_06uga_o._.js:23613:33)
+ GET /dashboard 200 in 1163ms (next.js: 220ms, application-code: 943ms)
+ GET /upload 200 in 76ms (next.js: 48ms, application-code: 28ms)
+[15:28:45.521] [INF] session created scope=session.create user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=6f15f138-a264-46bd-9c68-ac972cdc042a
+ POST /api/upload-sessions 201 in 1490ms (next.js: 799ms, application-code: 691ms)
+ POST /api/upload-sessions/6f15f138-a264-46bd-9c68-ac972cdc042a/images/presign 201 in 2.9s (next.js: 2.2s, application-code: 761ms)
+ POST /api/upload-sessions/6f15f138-a264-46bd-9c68-ac972cdc042a/images/presign 201 in 3.0s (next.js: 2.2s, application-code: 777ms)
+ POST /api/upload-sessions/6f15f138-a264-46bd-9c68-ac972cdc042a/images/presign 201 in 3.1s (next.js: 2.2s, application-code: 889ms)
+ POST /api/upload-sessions/6f15f138-a264-46bd-9c68-ac972cdc042a/images/presign 201 in 3.1s (next.js: 2.2s, application-code: 951ms)
+ POST /api/upload-sessions/6f15f138-a264-46bd-9c68-ac972cdc042a/images/presign 201 in 3.2s (next.js: 2.2s, application-code: 1038ms)
+ POST /api/upload-sessions/6f15f138-a264-46bd-9c68-ac972cdc042a/images/presign 201 in 3.2s (next.js: 2.2s, application-code: 1050ms)
+ POST /api/upload-sessions/6f15f138-a264-46bd-9c68-ac972cdc042a/images/presign 201 in 634ms (next.js: 34ms, application-code: 600ms)
+[15:28:54.589] [INF] starting background processing scope=session.process user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=6f15f138-a264-46bd-9c68-ac972cdc042a total=7
+[15:28:54.593] [INF] time-clustering complete scope=session.process user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=6f15f138-a264-46bd-9c68-ac972cdc042a total=7 cluster_count=1 dur_ms=1
+ POST /api/upload-sessions/6f15f138-a264-46bd-9c68-ac972cdc042a/process 200 in 3.4s (next.js: 2.7s, application-code: 792ms)
+[15:28:54.899] [INF] candidate validation mode scope=session.process user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=6f15f138-a264-46bd-9c68-ac972cdc042a ebay_connected=true
+ GET /api/upload-sessions/6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 2.6s (next.js: 1825ms, application-code: 820ms)
+[15:29:01.956] [DBG] Tesseract worker created scope=ocr.tesseract dur_ms=7053 worker_path_set=true core_path_set=true
+[15:29:02.995] [DBG] Tesseract worker created scope=ocr.tesseract dur_ms=8092 worker_path_set=true core_path_set=true
+[15:29:03.259] [DBG] Tesseract worker created scope=ocr.tesseract dur_ms=8356 worker_path_set=true core_path_set=true
+ GET /api/upload-sessions/6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 1021ms (next.js: 67ms, application-code: 954ms)
+[15:29:04.191] [DBG] Tesseract worker created scope=ocr.tesseract dur_ms=9288 worker_path_set=true core_path_set=true
+[15:29:04.409] [DBG] Tesseract worker created scope=ocr.tesseract dur_ms=9508 worker_path_set=true core_path_set=true
+[15:29:04.704] [DBG] Tesseract worker created scope=ocr.tesseract dur_ms=9801 worker_path_set=true core_path_set=true
+[15:29:05.075] [DBG] Tesseract worker created scope=ocr.tesseract dur_ms=10172 worker_path_set=true core_path_set=true
+[15:29:05.190] [DBG] Tesseract worker created scope=ocr.tesseract dur_ms=10287 worker_path_set=true core_path_set=true
+[15:29:05.190] [INF] TesseractPool init scope=ocr.pool workers=8 dur_ms=10289
+[15:29:05.191] [INF] OCR pool ready scope=session.process user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=6f15f138-a264-46bd-9c68-ac972cdc042a dur_ms=10291
+[15:29:06.712] [INF] downloads complete scope=session.process.ocr user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=6f15f138-a264-46bd-9c68-ac972cdc042a batch_id=55327bb1-764f-442c-a883-be5dbbe8485f count=1 dur_ms=1104
+ GET /api/upload-sessions/6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 1263ms (next.js: 49ms, application-code: 1214ms)
+ GET /api/upload-sessions/6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 894ms (next.js: 16ms, application-code: 878ms)
+ GET /api/upload-sessions/6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 928ms (next.js: 83ms, application-code: 845ms)
+ GET /api/upload-sessions/6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 1058ms (next.js: 113ms, application-code: 945ms)
+ GET /api/upload-sessions/6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 841ms (next.js: 29ms, application-code: 812ms)
+ GET /api/upload-sessions/6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 862ms (next.js: 61ms, application-code: 801ms)
+[15:29:22.805] [INF] image ocr done scope=session.process.ocr user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=6f15f138-a264-46bd-9c68-ac972cdc042a batch_id=55327bb1-764f-442c-a883-be5dbbe8485f image_id=59e9eacc-9f88-49b5-9886-c98f7e2b6b64 filename="2026-04-07 15.26.37.jpg" bytes=3544527 text_len=878 candidate_count=27 top_code=SER3SAAS top_conf=0.75 dur_ms=16091
+[15:29:24.552] [WRN] candidate validation failed scope=ebay.validate user_id=e192b777-b580-4ba1-8333-a06ced3cda68 code=SER3SAAS err="Request failed with status code 403" errType=AxiosError
+[15:29:24.553] [WRN] candidate validation failed scope=ebay.validate user_id=e192b777-b580-4ba1-8333-a06ced3cda68 code=3SAASSEAH err="Request failed with status code 403" errType=AxiosError
+[15:29:24.555] [WRN] candidate validation failed scope=ebay.validate user_id=e192b777-b580-4ba1-8333-a06ced3cda68 code=3EAESATE err="Request failed with status code 403" errType=AxiosError
+[15:29:24.555] [WRN] candidate validation failed scope=ebay.validate user_id=e192b777-b580-4ba1-8333-a06ced3cda68 code=9BSSENSE err="Request failed with status code 403" errType=AxiosError
+[15:29:24.727] [INF] cluster done scope=session.process user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=6f15f138-a264-46bd-9c68-ac972cdc042a cluster_idx=0 cluster_size=7 batch_id=55327bb1-764f-442c-a883-be5dbbe8485f ocr_rows=1 ocr_skipped=6 winning_code=SER3SAAS ebay_validated=true ebay_swapped=false had_consensus=false label_id=59e9eacc-9f88-49b5-9886-c98f7e2b6b64 dur_ms=19535
+[15:29:24.864] [INF] session ready for review scope=session.process user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=6f15f138-a264-46bd-9c68-ac972cdc042a cluster_count=1 codes_found=1 no_code=0 images_total=7 images_ocrd=1 ocr_savings_pct=86 dur_ms=30272
+ GET /api/upload-sessions/6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 612ms (next.js: 16ms, application-code: 596ms)
+ GET /api/upload-sessions/6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 819ms (next.js: 77ms, application-code: 743ms)
+ GET /review?session=6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 2.1s (next.js: 247ms, application-code: 1805ms)
+ GET /review?session=6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 2.5s (next.js: 6ms, application-code: 2.5s)
+[batch-review] PATCH /api/batches/55327bb1-764f-442c-a883-be5dbbe8485f/review — user=e192b777-b580-4ba1-8333-a06ced3cda68
+[batch-review] Approved code: "MIC-7524"
+[batch-review] 7 image(s) in group
+[batch-review] Calling searchEbayProducts(query="MIC-7524")
+[batch-review] Search/list error: Request failed with status code 403
+[batch-review] Stack:
+AxiosError: Request failed with status code 403
+    at settle (D:\OCR Project\ocr-crm\.next\dev\server\chunks\node_modules_axios_lib_0_ag6xk._.js:2067:16)
+    at IncomingMessage.handleStreamEnd (D:\OCR Project\ocr-crm\.next\dev\server\chunks\node_modules_axios_lib_0_ag6xk._.js:3540:181)
+    at IncomingMessage.emit (node:events:536:35)
+    at endReadableNT (node:internal/streams/readable:1698:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+ PATCH /api/batches/55327bb1-764f-442c-a883-be5dbbe8485f/review 200 in 4.2s (next.js: 1306ms, application-code: 2.9s)
+ GET /review?session=6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 1102ms (next.js: 5ms, application-code: 1098ms)
+ GET /review?session=6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 1489ms (next.js: 5ms, application-code: 1484ms)
+[batch-review] PATCH /api/batches/55327bb1-764f-442c-a883-be5dbbe8485f/review — user=e192b777-b580-4ba1-8333-a06ced3cda68
+[batch-review] Approved code: "PP+GF15"
+[batch-review] 7 image(s) in group
+[batch-review] Reusing existing product_searches row b4147f2e-b9c8-4b0d-81b0-2c102f0f174e (status=pending, attempt_count=1)
+[batch-review] Calling searchEbayProducts(query="PP+GF15")
+[batch-review] Search/list error: Request failed with status code 403
+[batch-review] Stack:
+AxiosError: Request failed with status code 403
+    at settle (D:\OCR Project\ocr-crm\.next\dev\server\chunks\node_modules_axios_lib_0_ag6xk._.js:2067:16)
+    at IncomingMessage.handleStreamEnd (D:\OCR Project\ocr-crm\.next\dev\server\chunks\node_modules_axios_lib_0_ag6xk._.js:3540:181)
+    at IncomingMessage.emit (node:events:536:35)
+    at endReadableNT (node:internal/streams/readable:1698:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+ PATCH /api/batches/55327bb1-764f-442c-a883-be5dbbe8485f/review 200 in 2.4s (next.js: 13ms, application-code: 2.4s)
+ GET /review?session=6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 1054ms (next.js: 8ms, application-code: 1046ms)
+ GET /review?session=6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 1892ms (next.js: 18ms, application-code: 1874ms)
+[batch-review] PATCH /api/batches/55327bb1-764f-442c-a883-be5dbbe8485f/review — user=e192b777-b580-4ba1-8333-a06ced3cda68
+[batch-review] Approved code: "MIC-7524.2"
+[batch-review] 7 image(s) in group
+[batch-review] Reusing existing product_searches row b4147f2e-b9c8-4b0d-81b0-2c102f0f174e (status=pending, attempt_count=2)
+[batch-review] Calling searchEbayProducts(query="MIC-7524.2")
+[batch-review] Search/list error: Request failed with status code 403
+[batch-review] Stack:
+AxiosError: Request failed with status code 403
+    at settle (D:\OCR Project\ocr-crm\.next\dev\server\chunks\node_modules_axios_lib_0_ag6xk._.js:2067:16)
+    at IncomingMessage.handleStreamEnd (D:\OCR Project\ocr-crm\.next\dev\server\chunks\node_modules_axios_lib_0_ag6xk._.js:3540:181)
+    at IncomingMessage.emit (node:events:536:35)
+    at endReadableNT (node:internal/streams/readable:1698:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+ PATCH /api/batches/55327bb1-764f-442c-a883-be5dbbe8485f/review 200 in 2.1s (next.js: 14ms, application-code: 2.1s)
+ GET /review?session=6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 1008ms (next.js: 3ms, application-code: 1005ms)
+ GET /review?session=6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 2.0s (next.js: 33ms, application-code: 1969ms)
+[batch-review] PATCH /api/batches/55327bb1-764f-442c-a883-be5dbbe8485f/review — user=e192b777-b580-4ba1-8333-a06ced3cda68
+[batch-review] Approved code: "SER3SAAS"
+[batch-review] 7 image(s) in group
+[batch-review] Reusing existing product_searches row b4147f2e-b9c8-4b0d-81b0-2c102f0f174e (status=pending, attempt_count=3)
+[batch-review] Calling searchEbayProducts(query="SER3SAAS")
+[batch-review] Search/list error: Request failed with status code 403
+[batch-review] Stack:
+AxiosError: Request failed with status code 403
+    at settle (D:\OCR Project\ocr-crm\.next\dev\server\chunks\node_modules_axios_lib_0_ag6xk._.js:2067:16)
+    at IncomingMessage.handleStreamEnd (D:\OCR Project\ocr-crm\.next\dev\server\chunks\node_modules_axios_lib_0_ag6xk._.js:3540:181)
+    at IncomingMessage.emit (node:events:536:35)
+    at endReadableNT (node:internal/streams/readable:1698:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+ PATCH /api/batches/55327bb1-764f-442c-a883-be5dbbe8485f/review 200 in 2.0s (next.js: 76ms, application-code: 1925ms)
+ GET /review?session=6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 1681ms (next.js: 12ms, application-code: 1669ms)
+ GET /dashboard 200 in 1010ms (next.js: 6ms, application-code: 1005ms)
+ GET /review?session=6f15f138-a264-46bd-9c68-ac972cdc042a 200 in 1845ms (next.js: 5ms, application-code: 1839ms)
+ GET /dashboard 200 in 778ms (next.js: 10ms, application-code: 767ms)
+ GET /upload 200 in 79ms (next.js: 9ms, application-code: 70ms)
+[15:32:06.798] [INF] session created scope=session.create user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=43250a34-0922-4510-86f5-94b702099239
+ POST /api/upload-sessions 201 in 496ms (next.js: 4ms, application-code: 492ms)
+ POST /api/upload-sessions/43250a34-0922-4510-86f5-94b702099239/images/presign 201 in 600ms (next.js: 10ms, application-code: 590ms)
+ POST /api/upload-sessions/43250a34-0922-4510-86f5-94b702099239/images/presign 201 in 641ms (next.js: 12ms, application-code: 629ms)
+ POST /api/upload-sessions/43250a34-0922-4510-86f5-94b702099239/images/presign 201 in 664ms (next.js: 20ms, application-code: 644ms)
+ POST /api/upload-sessions/43250a34-0922-4510-86f5-94b702099239/images/presign 201 in 682ms (next.js: 13ms, application-code: 669ms)
+ POST /api/upload-sessions/43250a34-0922-4510-86f5-94b702099239/images/presign 201 in 672ms (next.js: 6ms, application-code: 666ms)
+ POST /api/upload-sessions/43250a34-0922-4510-86f5-94b702099239/images/presign 201 in 710ms (next.js: 16ms, application-code: 694ms)
+ POST /api/upload-sessions/43250a34-0922-4510-86f5-94b702099239/images/presign 201 in 529ms (next.js: 3ms, application-code: 526ms)
+ POST /api/upload-sessions/43250a34-0922-4510-86f5-94b702099239/images/presign 201 in 582ms (next.js: 2ms, application-code: 579ms)
+ POST /api/upload-sessions/43250a34-0922-4510-86f5-94b702099239/images/presign 201 in 556ms (next.js: 15ms, application-code: 541ms)
+ POST /api/upload-sessions/43250a34-0922-4510-86f5-94b702099239/images/presign 201 in 597ms (next.js: 6ms, application-code: 591ms)
+ POST /api/upload-sessions/43250a34-0922-4510-86f5-94b702099239/images/presign 201 in 688ms (next.js: 7ms, application-code: 681ms)
+ POST /api/upload-sessions/43250a34-0922-4510-86f5-94b702099239/images/presign 201 in 681ms (next.js: 13ms, application-code: 669ms)
+ POST /api/upload-sessions/43250a34-0922-4510-86f5-94b702099239/images/presign 201 in 664ms (next.js: 4ms, application-code: 660ms)
+ POST /api/upload-sessions/43250a34-0922-4510-86f5-94b702099239/images/presign 201 in 655ms (next.js: 2ms, application-code: 653ms)
+[15:32:11.904] [INF] starting background processing scope=session.process user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=43250a34-0922-4510-86f5-94b702099239 total=14
+[15:32:11.906] [INF] time-clustering complete scope=session.process user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=43250a34-0922-4510-86f5-94b702099239 total=14 cluster_count=2 dur_ms=1
+ POST /api/upload-sessions/43250a34-0922-4510-86f5-94b702099239/process 200 in 666ms (next.js: 49ms, application-code: 617ms)
+[15:32:12.220] [INF] candidate validation mode scope=session.process user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=43250a34-0922-4510-86f5-94b702099239 ebay_connected=true
+[15:32:12.221] [INF] OCR pool ready scope=session.process user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=43250a34-0922-4510-86f5-94b702099239 dur_ms=1
+[15:32:14.101] [INF] downloads complete scope=session.process.ocr user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=43250a34-0922-4510-86f5-94b702099239 batch_id=d1cf0f4f-eff9-40ae-bdd3-7d33dd297bb4 count=1 dur_ms=1552
+ GET /api/upload-sessions/43250a34-0922-4510-86f5-94b702099239 200 in 622ms (next.js: 16ms, application-code: 605ms)
+[15:32:14.666] [INF] downloads complete scope=session.process.ocr user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=43250a34-0922-4510-86f5-94b702099239 batch_id=ec4f059b-ced0-4e2b-a1f7-28d1056026a4 count=1 dur_ms=2148
+[15:32:17.209] [INF] image ocr done scope=session.process.ocr user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=43250a34-0922-4510-86f5-94b702099239 batch_id=d1cf0f4f-eff9-40ae-bdd3-7d33dd297bb4 image_id=e8dea79a-f1fd-4214-ae27-bdf648a298b7 filename="2026-04-07 15.24.26.jpg" bytes=2581041 text_len=183 candidate_count=11 top_code=C60+4WEE top_conf=0.8 dur_ms=3107
+ GET /api/upload-sessions/43250a34-0922-4510-86f5-94b702099239 200 in 773ms (next.js: 60ms, application-code: 713ms)
+[15:32:18.476] [INF] image ocr done scope=session.process.ocr user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=43250a34-0922-4510-86f5-94b702099239 batch_id=ec4f059b-ced0-4e2b-a1f7-28d1056026a4 image_id=ff28113c-f215-4c22-a27a-a862b4da902e filename="2026-04-07 15.23.48.jpg" bytes=2859086 text_len=202 candidate_count=8 top_code=WARRANTY90 top_conf=0.75 dur_ms=3810
+[15:32:18.936] [WRN] candidate validation failed scope=ebay.validate user_id=e192b777-b580-4ba1-8333-a06ced3cda68 code=C60+4WEE err="Request failed with status code 403" errType=AxiosError
+[15:32:18.937] [WRN] candidate validation failed scope=ebay.validate user_id=e192b777-b580-4ba1-8333-a06ced3cda68 code=60+4WEEFA err="Request failed with status code 403" errType=AxiosError
+[15:32:18.937] [WRN] candidate validation failed scope=ebay.validate user_id=e192b777-b580-4ba1-8333-a06ced3cda68 code=60+4WEE err="Request failed with status code 403" errType=AxiosError
+[15:32:18.937] [WRN] candidate validation failed scope=ebay.validate user_id=e192b777-b580-4ba1-8333-a06ced3cda68 code=IC60+4 err="Request failed with status code 403" errType=AxiosError
+[15:32:19.085] [INF] cluster done scope=session.process user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=43250a34-0922-4510-86f5-94b702099239 cluster_idx=1 cluster_size=7 batch_id=d1cf0f4f-eff9-40ae-bdd3-7d33dd297bb4 ocr_rows=1 ocr_skipped=6 winning_code=C60+4WEE ebay_validated=true ebay_swapped=false had_consensus=false label_id=e8dea79a-f1fd-4214-ae27-bdf648a298b7 dur_ms=6864
+[15:32:19.522] [WRN] candidate validation failed scope=ebay.validate user_id=e192b777-b580-4ba1-8333-a06ced3cda68 code=WARRANTY90 err="Request failed with status code 403" errType=AxiosError
+[15:32:19.522] [WRN] candidate validation failed scope=ebay.validate user_id=e192b777-b580-4ba1-8333-a06ced3cda68 code=INWARRANTY90 err="Request failed with status code 403" errType=AxiosError
+[15:32:19.522] [WRN] candidate validation failed scope=ebay.validate user_id=e192b777-b580-4ba1-8333-a06ced3cda68 code=WARRANTY90DAYS err="Request failed with status code 403" errType=AxiosError
+[15:32:19.523] [WRN] candidate validation failed scope=ebay.validate user_id=e192b777-b580-4ba1-8333-a06ced3cda68 code=LP4FIM err="Request failed with status code 403" errType=AxiosError
+[15:32:19.726] [INF] cluster done scope=session.process user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=43250a34-0922-4510-86f5-94b702099239 cluster_idx=0 cluster_size=7 batch_id=ec4f059b-ced0-4e2b-a1f7-28d1056026a4 ocr_rows=1 ocr_skipped=6 winning_code=WARRANTY90 ebay_validated=true ebay_swapped=false had_consensus=false label_id=ff28113c-f215-4c22-a27a-a862b4da902e dur_ms=7505
+[15:32:19.922] [INF] session ready for review scope=session.process user_id=e192b777-b580-4ba1-8333-a06ced3cda68 session_id=43250a34-0922-4510-86f5-94b702099239 cluster_count=2 codes_found=2 no_code=0 images_total=14 images_ocrd=2 ocr_savings_pct=86 dur_ms=8017
+ GET /api/upload-sessions/43250a34-0922-4510-86f5-94b702099239 200 in 600ms (next.js: 17ms, application-code: 583ms)
+ GET /api/upload-sessions/43250a34-0922-4510-86f5-94b702099239 200 in 811ms (next.js: 52ms, application-code: 760ms)
+ GET /review?session=43250a34-0922-4510-86f5-94b702099239 200 in 1910ms (next.js: 20ms, application-code: 1891ms)
+ GET /review?session=43250a34-0922-4510-86f5-94b702099239 200 in 1246ms (next.js: 5ms, application-code: 1241ms)
+ GET /review?session=43250a34-0922-4510-86f5-94b702099239 200 in 827ms (next.js: 152ms, application-code: 675ms)
+ GET /review?session=43250a34-0922-4510-86f5-94b702099239 200 in 451ms (next.js: 4ms, application-code: 447ms)
+ GET /review?session=43250a34-0922-4510-86f5-94b702099239 200 in 231ms (next.js: 7ms, application-code: 224ms)
+ GET /review?session=43250a34-0922-4510-86f5-94b702099239 200 in 561ms (next.js: 167ms, application-code: 394ms)
+ GET /review?session=43250a34-0922-4510-86f5-94b702099239 200 in 232ms (next.js: 11ms, application-code: 221ms)
+ GET /review?session=43250a34-0922-4510-86f5-94b702099239 200 in 117ms (next.js: 4ms, application-code: 113ms)
+ GET /review?session=43250a34-0922-4510-86f5-94b702099239 200 in 707ms (next.js: 157ms, application-code: 550ms)
+ GET /review?session=43250a34-0922-4510-86f5-94b702099239 200 in 328ms (next.js: 5ms, application-code: 323ms)
+ GET /review?session=43250a34-0922-4510-86f5-94b702099239 200 in 156ms (next.js: 6ms, application-code: 150ms)
+ GET /review?session=43250a34-0922-4510-86f5-94b702099239 200 in 541ms (next.js: 144ms, application-code: 398ms)
+ GET /review?session=43250a34-0922-4510-86f5-94b702099239 200 in 249ms (next.js: 4ms, application-code: 245ms)
+ GET /review?session=43250a34-0922-4510-86f5-94b702099239 200 in 115ms (next.js: 4ms, application-code: 112ms)

@@ -1,8 +1,44 @@
+import axios from 'axios'
 import { createEbayClient, isEbayErrorCode } from './client'
 import { describeEbayError } from './error'
-import { getOrCreateMerchantLocationKey } from './location'
+import { getOrCreateMerchantLocationKey, invalidateLocationCache } from './location'
 import { withContext } from '@/lib/log'
 import type { EbayInventoryItem, EbayOffer } from '@/types/ebay'
+
+/**
+ * 25002 is a generic "user error" code that eBay overloads for several
+ * unrelated conditions (duplicate SKU, missing country, missing aspects, …).
+ * Distinguish them via the `parameters[].name` field on the response body.
+ */
+interface EbayApiErrorBody {
+  errors?: Array<{
+    errorId?: number
+    message?: string
+    longMessage?: string
+    parameters?: Array<{ name?: string; value?: string }>
+  }>
+}
+
+function getEbayErrorBody(err: unknown): EbayApiErrorBody | undefined {
+  if (!axios.isAxiosError(err)) return undefined
+  return err.response?.data as EbayApiErrorBody | undefined
+}
+
+function ebayErrorHasParam(err: unknown, errorId: number, paramName: string): boolean {
+  const body = getEbayErrorBody(err)
+  const match = body?.errors?.find((e) => e.errorId === errorId)
+  if (!match) return false
+  return (match.parameters ?? []).some(
+    (p) => p.name?.trim().toLowerCase() === paramName.toLowerCase(),
+  )
+}
+
+function ebayErrorMessageMatches(err: unknown, errorId: number, re: RegExp): boolean {
+  const body = getEbayErrorBody(err)
+  const match = body?.errors?.find((e) => e.errorId === errorId)
+  if (!match) return false
+  return re.test(match.message ?? '') || re.test(match.longMessage ?? '')
+}
 
 // Valid Sell-API condition enum values. Anything outside this set triggers
 // eBay errorId=2004 "Could not serialize field [condition]".
@@ -125,8 +161,16 @@ export async function createOffer(userId: string, offer: EbayOffer): Promise<str
     log.info('Offer created', { offer_id: res.data.offerId, dur_ms: Date.now() - started })
     return res.data.offerId
   } catch (err) {
-    // eBay error 25002: SKU already has an offer — fetch existing offer ID and update it.
-    if (isEbayErrorCode(err, 25002)) {
+    // 25002 is overloaded by eBay across many distinct conditions
+    // ("duplicate SKU", "missing country", "missing aspects", …). Only handle
+    // the duplicate-SKU case here; everything else must propagate unchanged
+    // so the caller sees the real reason.
+    const looksLikeDuplicateSku =
+      isEbayErrorCode(err, 25002) &&
+      (ebayErrorHasParam(err, 25002, 'sku') ||
+        ebayErrorMessageMatches(err, 25002, /already\s+(exists|has).+offer|offer.+already\s+exists/i))
+
+    if (looksLikeDuplicateSku) {
       log.warn('SKU already has offer — fetching existing', { error_id: 25002 })
       const listRes = await client.get<{ offers: Array<{ offerId: string }> }>(
         '/sell/inventory/v1/offer',
@@ -147,6 +191,17 @@ export async function createOffer(userId: string, offer: EbayOffer): Promise<str
     })
     throw err
   }
+}
+
+export async function updateOffer(
+  userId: string,
+  offerId: string,
+  offer: EbayOffer,
+): Promise<void> {
+  const log = withContext({ scope: 'ebay.inventory.offer.update', user_id: userId, offer_id: offerId })
+  log.info('Updating offer', { merchant_location_key: offer.merchantLocationKey })
+  const client = createEbayClient(userId)
+  await client.put(`/sell/inventory/v1/offer/${offerId}`, offer)
 }
 
 export async function publishOffer(userId: string, offerId: string): Promise<string> {
@@ -255,7 +310,38 @@ export async function createAndPublishListing(
   }
 
   const offerId = await createOffer(userId, offer)
-  const listingId = await publishOffer(userId, offerId)
+
+  let listingId: string
+  try {
+    listingId = await publishOffer(userId, offerId)
+  } catch (publishErr) {
+    // Self-heal the one specific publish failure that the prior layers can
+    // miss: cached merchantLocationKey now points at a location whose country
+    // has gone missing (e.g., a manual edit in Seller Hub, or it never had
+    // one and listLocations didn't expose that). Invalidate cache, force a
+    // fresh resolution, re-PUT the offer with the new key, and retry once.
+    const isCountryError =
+      isEbayErrorCode(publishErr, 25002) &&
+      (ebayErrorHasParam(publishErr, 25002, 'Item.Country') ||
+        ebayErrorMessageMatches(publishErr, 25002, /Item\.Country/i))
+    if (!isCountryError) throw publishErr
+
+    log.warn('publish failed with Item.Country — re-resolving location and retrying once', {
+      offer_id: offerId,
+      previous_merchant_location_key: merchantLocationKey,
+    })
+    invalidateLocationCache(userId)
+    const freshKey = await getOrCreateMerchantLocationKey(userId)
+    if (freshKey !== merchantLocationKey) {
+      log.info('Location resolved to a different key after invalidation', {
+        from: merchantLocationKey,
+        to: freshKey,
+      })
+    }
+    await updateOffer(userId, offerId, { ...offer, merchantLocationKey: freshKey })
+    listingId = await publishOffer(userId, offerId)
+  }
+
   const domain = process.env.EBAY_ENVIRONMENT === 'sandbox' ? 'sandbox.ebay.com' : 'ebay.com'
   const listingUrl = `https://www.${domain}/itm/${listingId}`
 
