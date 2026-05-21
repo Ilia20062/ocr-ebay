@@ -62,6 +62,22 @@ function decrypt(ciphertext) {
   return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8')
 }
 
+async function fetchApplicationToken() {
+  const creds = Buffer.from(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`).toString('base64')
+  const body = new URLSearchParams({
+    grant_type: 'client_credentials',
+    scope: 'https://api.ebay.com/oauth/api_scope',
+  })
+  const res = await fetch(`${EBAY_BASE}/identity/v1/oauth2/token`, {
+    method: 'POST',
+    headers: { Authorization: `Basic ${creds}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  })
+  const text = await res.text()
+  if (!res.ok) throw new Error(`app-token failed: HTTP ${res.status} ${text.slice(0, 500)}`)
+  return JSON.parse(text).access_token
+}
+
 async function refreshAccessToken(refreshTokenPlain) {
   const creds = Buffer.from(`${EBAY_CLIENT_ID}:${EBAY_CLIENT_SECRET}`).toString('base64')
   const body = new URLSearchParams({
@@ -282,16 +298,60 @@ async function main() {
   }
   console.log(`  offerId=${offerId}`)
 
-  // 10) POST publish.
+  // 10) POST publish. On 25005 (invalid/non-leaf category) — common when the
+  //     seller can't list in Motors — fall back to EBAY_FALLBACK_CATEGORY_ID
+  //     (or the hard-coded non-Motors leaf 14947 = Collectibles > Automobilia
+  //     > Specialty & Misc) and retry once.
   console.log('POST publish…')
-  const pubRes = await ebay(accessToken, 'POST', `/sell/inventory/v1/offer/${offerId}/publish`)
+  let pubRes = await ebay(accessToken, 'POST', `/sell/inventory/v1/offer/${offerId}/publish`)
+  let publishedCategory = offer.categoryId
+  if (pubRes.status >= 400 && (pubRes.body?.errors ?? []).some((e) => e.errorId === 25005)) {
+    // Ask eBay's own Taxonomy API for category suggestions matching the title,
+    // then try each one in order until publish succeeds. This is what the
+    // app's publishListing already does in production; mirroring it here.
+    const fallback = process.env.EBAY_FALLBACK_CATEGORY_ID?.trim()
+    console.log(`  category ${offer.categoryId} rejected (25005) — asking Taxonomy for valid leaves`)
+    const appToken = await fetchApplicationToken()
+    const tree = await ebay(appToken, 'GET', `/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id=${MARKETPLACE}`)
+    const treeId = tree.body?.categoryTreeId
+    if (!treeId) bail('could not fetch category tree id', tree.body)
+    const suggestRes = await ebay(appToken, 'GET', `/commerce/taxonomy/v1/category_tree/${treeId}/get_category_suggestions?q=${encodeURIComponent(title)}`)
+    const suggestions = (suggestRes.body?.categorySuggestions ?? [])
+      .map((s) => s.category?.categoryId)
+      .filter(Boolean)
+    const candidates = [...suggestions, ...(fallback ? [fallback] : []), '14947']
+      .filter((v, i, a) => a.indexOf(v) === i)
+    console.log(`  Taxonomy suggestions: ${candidates.join(', ')}`)
+    let lastErr = pubRes.body
+    for (const candCategory of candidates) {
+      console.log(`  trying category ${candCategory}…`)
+      const invRetry = await ebay(accessToken, 'PUT', `/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, inventoryItem)
+      if (invRetry.status >= 400) { lastErr = invRetry.body; continue }
+      const updRes = await ebay(accessToken, 'PUT', `/sell/inventory/v1/offer/${offerId}`, { ...offer, categoryId: candCategory })
+      if (updRes.status >= 400) { lastErr = updRes.body; continue }
+      const tryPub = await ebay(accessToken, 'POST', `/sell/inventory/v1/offer/${offerId}/publish`)
+      if (tryPub.status < 400) {
+        pubRes = tryPub
+        publishedCategory = candCategory
+        break
+      }
+      lastErr = tryPub.body
+      const errs = (tryPub.body?.errors ?? [])
+      const fatal = errs.some((e) => e.errorId !== 25005 && e.errorId !== 25004)
+      if (fatal) { pubRes = tryPub; break }
+    }
+    if (pubRes.status >= 400) {
+      await supa.from('listings').update({ status: 'failed', error_message: `publish (all candidates exhausted): ${JSON.stringify(lastErr).slice(0,1500)}` }).eq('id', listing.id)
+      bail(`publish failed for every Taxonomy candidate (${candidates.join(', ')}). Last error:`, lastErr)
+    }
+  }
   if (pubRes.status >= 400) {
     await supa.from('listings').update({ status: 'failed', error_message: `publish: ${JSON.stringify(pubRes.body).slice(0,1500)}` }).eq('id', listing.id)
     bail('publish failed', pubRes.body)
   }
   const ebayListingId = pubRes.body?.listingId
   const ebayUrl = `https://www.ebay.com/itm/${ebayListingId}`
-  console.log(`  ✓ ebayListingId=${ebayListingId}`)
+  console.log(`  ✓ ebayListingId=${ebayListingId} (category=${publishedCategory})`)
   console.log(`  ✓ ${ebayUrl}`)
 
   // 11) Mark active.
@@ -299,6 +359,7 @@ async function main() {
     status: 'active',
     ebay_item_id: ebayListingId,
     ebay_listing_url: ebayUrl,
+    category_id: publishedCategory,
     listed_at: new Date().toISOString(),
     error_message: null,
   }).eq('id', listing.id)
