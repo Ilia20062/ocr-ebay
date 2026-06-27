@@ -16,15 +16,16 @@ export const POST = withAuth(async (req, userId) => {
   const db = getSupabaseAdminClient()
   const data = parsed.data
 
-  // Verify search ownership
+  // Verify search ownership (product_searches now hangs off the batch — see
+  // migration 006 — so ownership resolves through upload_batches.user_id).
   const { data: search } = await db
     .from('product_searches')
-    .select('id, ocr_results!inner(images!inner(user_id))')
+    .select('id, upload_batches!inner(user_id)')
     .eq('id', data.search_id)
     .single()
 
-  const rawSearch = search as unknown as { id: string; ocr_results: { images: { user_id: string } } } | null
-  if (!rawSearch || rawSearch.ocr_results.images.user_id !== userId) return apiError('Search not found', 404)
+  const rawSearch = search as unknown as { id: string; upload_batches: { user_id: string } } | null
+  if (!rawSearch || rawSearch.upload_batches.user_id !== userId) return apiError('Search not found', 404)
 
   // Check eBay connection
   const { data: conn } = await db

@@ -1,15 +1,10 @@
-import { createClient } from '@supabase/supabase-js'
-import type { Database } from '@/types/supabase'
+import { createAdminClient, type DbClient } from '@/lib/aws/client'
 
-let adminClient: ReturnType<typeof createClient<Database>> | null = null
-
-export function getSupabaseAdminClient() {
-  if (!adminClient) {
-    adminClient = createClient<Database>(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { autoRefreshToken: false, persistSession: false } }
-    )
-  }
-  return adminClient
+/**
+ * Backed by AWS (RDS Postgres + S3) instead of Supabase. The exported function
+ * name is unchanged so existing call sites keep working; the returned object
+ * exposes the same `.from()/.storage` surface.
+ */
+export function getSupabaseAdminClient(): DbClient {
+  return createAdminClient()
 }

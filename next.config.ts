@@ -29,10 +29,11 @@ const nextConfig: NextConfig = {
   },
   images: {
     remotePatterns: [
+      // S3 presigned GET URLs (virtual-hosted and path-style, any region).
       {
         protocol: 'https',
-        hostname: '*.supabase.co',
-        pathname: '/storage/v1/object/sign/**',
+        hostname: '**.amazonaws.com',
+        pathname: '/**',
       },
     ],
   },
