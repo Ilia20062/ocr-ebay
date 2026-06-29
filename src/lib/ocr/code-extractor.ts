@@ -14,8 +14,22 @@ const WATERMARK_PATTERNS: RegExp[] = [
   /^\d{1,3}\s*YEARS?$/,          // "1YEAR", "2YEARS"
   /^\d{1,2}\s*MONTHS?$/,         // "12MONTH", "6MONTHS"
   /^\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}$/, // dates: "11/06/15", "11.06.2015"
+  /^\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}[/.-]\d{1,4}$/, // date + batch/shift suffix: "30.03.11/141"
   /^\d{1,2}:\d{2}(?::\d{2})?$/,  // times: "21:20", "21:20:01"
   /^V?\d{1,3}\.\d{1,3}(?:\.\d{1,3})?$/, // version-y: "V1.0", "1.2.3"
+]
+
+// Seller photo-template branding / boilerplate that OCR glues onto nearby
+// digits ("3718PARTS", "PARTSQUT4", "PARTSOUT3P-", "5Z90DAYS"). A genuine OEM
+// part number never contains these words, so reject any candidate that CONTAINS
+// one (matched against the uppercased candidate).
+const WATERMARK_SUBSTRINGS: string[] = [
+  'PARTS', // seller "PartsOut" — covers PARTSOUT/PARTSQUT/PARTSUT/PARTSO/3718PARTS
+  'PARTOUT', // OCR misread of "PartsOut" dropping the S
+  'WARRANT',
+  'DAYS',
+  'GENUINE',
+  'ORIGINAL',
 ]
 
 // Exact-match watermark / boilerplate words that pass the digit guard.
@@ -39,13 +53,29 @@ const WATERMARK_LITERALS = new Set<string>([
   'CE2026',
 ])
 
+// True if the code embeds a plausible date (DD.MM.YY[.batch]) anywhere — e.g.
+// "30.03.11/141", or a date glued to a fragment like "30.03.11/14M23". We
+// validate day ≤ 31 and month ≤ 12 so genuine part numbers with three numeric
+// groups ("12-34-5678", month 34) are NOT mistaken for dates.
+function embedsDate(c: string): boolean {
+  const m = c.match(/(\d{1,2})[.\-/](\d{1,2})[.\-/]\d{2,4}/)
+  if (!m) return false
+  const dd = Number(m[1])
+  const mm = Number(m[2])
+  return dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12
+}
+
 export function isWatermark(code: string): boolean {
   if (!code) return false
   const c = code.toUpperCase().trim()
   if (WATERMARK_LITERALS.has(c)) return true
+  for (const sub of WATERMARK_SUBSTRINGS) {
+    if (c.includes(sub)) return true
+  }
   for (const re of WATERMARK_PATTERNS) {
     if (re.test(c)) return true
   }
+  if (embedsDate(c)) return true
   return false
 }
 

@@ -9,6 +9,7 @@ import {
 import { runGoogleVisionOcr } from './google-vision'
 import { scanBarcodeFromRgba } from './barcode'
 import { runPaddleOcr, isPaddleEnabled } from './paddle'
+import { maskOverlays } from './overlay-mask'
 import { log } from '@/lib/log'
 import type { OcrProviderResult } from '@/types/ocr'
 
@@ -298,13 +299,18 @@ export async function recognizeWithFallback(
   const paddleEnabled = isPaddleEnabled()
   const wantBarcode = !options.skipBarcode
 
+  // Paint out the seller's fixed-position photo-template overlays (logo +
+  // warranty badge) BEFORE any OCR so neither engine can misread "PartsOut" /
+  // "WARRANTY" / "90 DAYS" as a part number. No-op if disabled or on failure.
+  const { buffer: ocrBuffer, mime: ocrMime } = await maskOverlays(buffer)
+
   // Single sharp pipeline: produce JPEG (for OCR) + optional RGBA (for zxing)
   // from one decode. Previously preprocessForOcr + scanBarcode each ran their
   // own sharp pipeline against the original buffer — doubling per-image decode
   // cost. Skipping RGBA when barcode is disabled avoids the extra encode too.
-  const processed = await preprocessForOcr(buffer, wantBarcode)
+  const processed = await preprocessForOcr(ocrBuffer, wantBarcode)
   const processedJpeg = processed.jpeg
-  const processedMime = processed.fallback ? mimeType : 'image/jpeg'
+  const processedMime = processed.fallback ? ocrMime : 'image/jpeg'
 
   // 0) Barcode pre-pass (when requested + we have RGBA pixels in hand).
   //    Pure-1D and QR codes return their exact payload with effectively 100%
@@ -380,6 +386,10 @@ export async function recognizeWithFallback(
   if (visionEnabled) {
     const visionStart = Date.now()
     try {
+      // Vision gets the ORIGINAL full-res buffer (not masked, not downscaled):
+      // it reads faint engraved digits best at full fidelity, and the extractor
+      // already rejects the seller overlays from its token stream. Masking is
+      // only applied to the Tesseract path (which merges adjacent text).
       const visionResult = await runGoogleVisionOcr(buffer.toString('base64'), mimeType)
       log.info('Vision fallback ran', {
         scope: 'ocr.recognize',
@@ -392,12 +402,18 @@ export async function recognizeWithFallback(
         dur_ms: Date.now() - visionStart,
       })
 
-      // Prefer Vision when it produced ANY candidate or substantially more text.
-      const primCands = primaryResult?.candidates.length ?? 0
-      const primTextLen = primaryResult?.extractedText.length ?? 0
+      // Prefer Vision by candidate QUALITY, not count. Tesseract on noisy molded
+      // codes emits many junk candidates that used to out-number — and wrongly
+      // suppress — Vision's single clean read. Use Vision when its best candidate
+      // is at least as strong as primary's, or when primary found none at all.
+      const primTop = primaryResult?.topCandidate?.confidence ?? 0
+      const visTop = visionResult.topCandidate?.confidence ?? 0
+      if (visionResult.topCandidate && visTop >= primTop) {
+        return visionResult
+      }
       if (
-        visionResult.candidates.length > primCands ||
-        (visionResult.candidates.length === primCands && visionResult.extractedText.length > primTextLen)
+        !primaryResult?.topCandidate &&
+        visionResult.extractedText.length > (primaryResult?.extractedText.length ?? 0)
       ) {
         return visionResult
       }
