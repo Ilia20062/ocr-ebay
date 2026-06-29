@@ -11,6 +11,7 @@ export interface GroupForReview {
   sessionId: string | null
   autoGrouped: boolean
   finalCode: string | null
+  caseNumber: string | null
   winningOcrResultId: string | null
   totalImages: number
   images: Array<{

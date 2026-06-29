@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS upload_batches (
   processed             INT NOT NULL DEFAULT 0,
   winning_ocr_result_id UUID,
   final_code            TEXT,
+  case_number           TEXT,
   upload_session_id     UUID REFERENCES upload_sessions(id) ON DELETE CASCADE,
   auto_grouped          BOOLEAN NOT NULL DEFAULT false,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -195,6 +196,9 @@ BEGIN
       FOREIGN KEY (winning_ocr_result_id) REFERENCES ocr_results(id) ON DELETE SET NULL;
   END IF;
 END$$;
+
+-- ---- additive columns (idempotent — for already-created databases) ---------
+ALTER TABLE upload_batches ADD COLUMN IF NOT EXISTS case_number TEXT;
 
 -- ---- computed view ---------------------------------------------------------
 CREATE OR REPLACE VIEW ocr_results_with_final_code AS

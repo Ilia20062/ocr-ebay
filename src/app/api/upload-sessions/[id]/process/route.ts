@@ -11,6 +11,8 @@ export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 export const maxDuration = 300
 import { resolveGroupCode } from '@/lib/ocr/group-resolver'
+import { extractBatchNumber } from '@/lib/ocr/code-extractor'
+import { runGoogleVisionOcr } from '@/lib/ocr/google-vision'
 import {
   userHasEbayConnection,
   validateCandidatesWithEbay,
@@ -96,6 +98,26 @@ export const POST = withAuth(async (_req, userId, params) => {
 
   return NextResponse.json({ message: 'Processing started', total: images.length })
 })
+
+/**
+ * Read the seller's case/batch number from the batch's first (case-number)
+ * image. Uses Google Vision for the raw text (a clear printed number), then
+ * `extractBatchNumber` to pull the integer while rejecting warranty/date noise.
+ * Best-effort: returns null if Vision is unavailable or no number is found.
+ */
+async function extractCaseNumber(image: ClusterImage): Promise<string | null> {
+  if (!process.env.GOOGLE_VISION_API_KEY) return null
+  try {
+    const db = getSupabaseAdminClient()
+    const { data: blob, error } = await db.storage.from('images').download(image.storage_path)
+    if (error || !blob) return null
+    const buf = Buffer.from(await blob.arrayBuffer())
+    const result = await runGoogleVisionOcr(buf.toString('base64'), blob.type || 'image/jpeg')
+    return extractBatchNumber(result.extractedText)
+  } catch {
+    return null
+  }
+}
 
 async function processSessionInBackground(
   sessionId: string,
@@ -215,6 +237,21 @@ async function processSessionInBackground(
         })
       }
 
+      // ─── Batch-number image ───────────────────────────────────────────────
+      // Per the workflow, the FIRST image (by capture time) is the seller's
+      // case-number sticker ("3718 Parts Out…"). Read the case/batch number
+      // from it (used as the listing SKU) and EXCLUDE it from part-code
+      // detection — only the remaining images (esp. the last close-up) carry the
+      // actual part number. Single-image batches keep their one image for code.
+      // ─────────────────────────────────────────────────────────────────────
+      const sortedByTime = [...cluster].sort(
+        (a, b) => (a.capturedAt?.getTime() ?? 0) - (b.capturedAt?.getTime() ?? 0),
+      )
+      const batchNumberImage = sortedByTime[0]
+      const caseNumber = await extractCaseNumber(batchNumberImage)
+      const codeCluster =
+        cluster.length >= 2 ? cluster.filter((c) => c.id !== batchNumberImage.id) : cluster
+
       // ─── Two-phase OCR ────────────────────────────────────────────────────
       // Phase 1: run OCR only on bare .jpg files (close-ups of the molded code).
       //   We pass skipBarcode=true because phase-1 inputs are molded plastic
@@ -225,8 +262,8 @@ async function processSessionInBackground(
       //   remaining PNG which is a latency cliff on clusters of 10+ PNGs.
       // ─────────────────────────────────────────────────────────────────────
       const PHASE2_CAP = 3
-      const labelCandidates = pickLabelCandidates(cluster)
-      const phase1Images = labelCandidates.length > 0 ? labelCandidates : cluster
+      const labelCandidates = pickLabelCandidates(codeCluster)
+      const phase1Images = labelCandidates.length > 0 ? labelCandidates : codeCluster
       const phase1IsLabels = labelCandidates.length > 0
       const phase1Ocr = await runOcrOnImages(
         pool!,
@@ -245,10 +282,10 @@ async function processSessionInBackground(
       let ocrRows: OcrRow[] = phase1Ocr
 
       const skippedSomeImages =
-        labelCandidates.length > 0 && labelCandidates.length < cluster.length
+        labelCandidates.length > 0 && labelCandidates.length < codeCluster.length
 
       if (!phase1HasCode && skippedSomeImages) {
-        const remainingAll = cluster.filter(
+        const remainingAll = codeCluster.filter(
           (c) => !labelCandidates.find((l) => l.id === c.id),
         )
         // Earliest-first by capturedAt — labels are typically shot last, so the
@@ -282,7 +319,7 @@ async function processSessionInBackground(
       // Stage F: pick label candidate (informs the ✨ thumbnail badge). Use
       // measured OCR confidence when we have it.
       const labelImg = pickLabelCandidate(
-        cluster.map((c) => {
+        codeCluster.map((c) => {
           const o = ocrRows.find((r) => r.image_id === c.id)
           return {
             id: c.id,
@@ -334,7 +371,8 @@ async function processSessionInBackground(
         .update({
           status: 'awaiting_review',
           winning_ocr_result_id: resolved.winningOcrResultId,
-          final_code: resolved.winningCode,
+          final_code: resolved.winningCode, // null => "no code extracted" in review
+          case_number: caseNumber,
           processed: cluster.length,
         })
         .eq('id', batch.id)

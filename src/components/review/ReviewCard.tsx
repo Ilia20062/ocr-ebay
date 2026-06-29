@@ -318,12 +318,17 @@ export default function ReviewCard({ group, onSubmit, onSplit, splitBusy }: Prop
           <span className="px-3 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-600 border border-gray-200 shadow-sm">
             {group.images.length} Photo{group.images.length !== 1 ? 's' : ''}
           </span>
+          {group.caseNumber && (
+            <span className="px-3 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-sm" title="Case / batch number from the first photo (used as SKU)">
+              Case #{group.caseNumber}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {noCode ? (
             <>
               <span className="px-3 py-1.5 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1.5 shadow-sm">
-                <AlertCircle className="w-4 h-4" /> No code detected — type the product code
+                <AlertCircle className="w-4 h-4" /> No code extracted — type the product code
               </span>
               <button
                 onClick={handleRetryOcr}

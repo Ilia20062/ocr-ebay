@@ -1,5 +1,37 @@
 import type { OcrCandidate } from '@/types/ocr'
 
+/**
+ * Extract the seller's case / batch number from the FIRST image of a batch
+ * (the case-number sticker, e.g. "3718 Parts Out Warranty 90 Days" → "3718").
+ *
+ * This is NOT a part number: it's a plain integer the seller writes on each
+ * case, used as the listing SKU. We reject warranty durations ("90 DAYS"),
+ * years, and date components so only the real case number remains.
+ */
+export function extractBatchNumber(text: string): string | null {
+  if (!text) return null
+  const norm = text.toUpperCase().replace(/[^\x20-\x7E]/g, ' ')
+  const candidates: string[] = []
+  for (const m of norm.matchAll(/(\d{1,6})/g)) {
+    const num = m[1]
+    const idx = m.index ?? 0
+    const before = idx > 0 ? norm[idx - 1] : ''
+    const afterChar = norm[idx + num.length] ?? ''
+    const afterWord = norm.slice(idx + num.length).trimStart()
+    // part of a date / decimal ("30.03.11", "7.47") — skip
+    if (before === '.' || before === '/' || afterChar === '.' || afterChar === '/' || afterChar === ':') continue
+    // warranty / duration ("90 DAYS", "1 YEAR", "12 MONTHS") — skip
+    if (/^(DAYS?|YEARS?|MONTHS?)\b/.test(afterWord)) continue
+    // calendar years — skip
+    if (/^(19|20)\d\d$/.test(num)) continue
+    candidates.push(num)
+  }
+  if (candidates.length === 0) return null
+  // Prefer the longest (most specific) standalone number as the case number.
+  candidates.sort((a, b) => b.length - a.length || candidates.indexOf(a) - candidates.indexOf(b))
+  return candidates[0]
+}
+
 // Part number pattern: uppercase letters, digits, hyphens, slashes, dots, plus — 4 to 25 chars
 // \b breaks on + so we use a lookahead/lookbehind for non-alphanumeric boundaries instead
 const PART_NUMBER_REGEX = /(?<![A-Z0-9])([A-Z0-9][A-Z0-9\-\/\.\+]{2,23}[A-Z0-9])(?![A-Z0-9])/g

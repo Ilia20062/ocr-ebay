@@ -20,7 +20,7 @@ export default async function ReviewPage({
   let query = db
     .from('upload_batches')
     .select(
-      'id, status, final_code, winning_ocr_result_id, total_images, upload_session_id, auto_grouped, created_at',
+      'id, status, final_code, case_number, winning_ocr_result_id, total_images, upload_session_id, auto_grouped, created_at',
     )
     .eq('user_id', user!.id)
     .eq('status', 'awaiting_review')
@@ -128,6 +128,7 @@ export default async function ReviewPage({
       sessionId: b.upload_session_id,
       autoGrouped: b.auto_grouped ?? false,
       finalCode: b.final_code,
+      caseNumber: b.case_number ?? null,
       winningOcrResultId: b.winning_ocr_result_id,
       totalImages: b.total_images,
       images: imgs.map((img) => ({
