@@ -10,6 +10,8 @@ import {
 } from './taxonomy'
 import { enqueueRetry } from '@/lib/retry'
 import { generateListingDescription } from '@/lib/ai/generate-description'
+import { parseListingFields, buildAspects, conditionStatement } from '@/lib/ai/parse-listing'
+import { computeListingPrice } from './pricing'
 import { describeEbayError } from './error'
 import { withContext, type LogContext } from '@/lib/log'
 import type { EbayItemSummary } from '@/types/ebay'
@@ -102,7 +104,30 @@ export async function autoCreateDraftListing({
 }: DraftParams): Promise<DraftListingResult> {
   const steps: AutoListStep[] = []
   const db = getSupabaseAdminClient()
-  const sku = `SKU-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`
+
+  // Pull comparables (for pricing), the OEM part number (the search query), and
+  // the case number (used as the SKU and the "Case" aspect, per spec).
+  const { data: searchRow } = await db
+    .from('product_searches')
+    .select('batch_id, results_raw, search_query')
+    .eq('id', searchId)
+    .single()
+  const comparables = (searchRow?.results_raw as EbayItemSummary[] | null) ?? []
+  const partNumber: string | null = searchRow?.search_query ?? null
+  const resolvedBatchId = batchId ?? searchRow?.batch_id ?? null
+  let caseNumber: string | null = null
+  if (resolvedBatchId) {
+    const { data: batchRow } = await db
+      .from('upload_batches')
+      .select('case_number')
+      .eq('id', resolvedBatchId)
+      .single()
+    caseNumber = batchRow?.case_number ?? null
+  }
+  // SKU = case number (spec). Sanitize to eBay's allowed SKU charset.
+  const sku = caseNumber
+    ? caseNumber.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 50) || `SKU-${Date.now()}`
+    : `SKU-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`
   const logger = withContext({
     scope: 'ebay.draft',
     user_id: userId,
@@ -116,10 +141,17 @@ export async function autoCreateDraftListing({
     images: imageUrls.length,
   })
 
-  const title = bestMatch.title.slice(0, 80)
-  const price = parseFloat(bestMatch.price.value)
+  // Structured fields via AI: clean "Year Make Model Part OEM <PN>" title +
+  // Brand/Placement/Color for the item aspects. Price = average of comparables
+  // − 7% (spec: 5–8%), falling back to the best-match price.
+  const fields = await parseListingFields(bestMatch.title, partNumber)
+  const title = (fields?.title ?? bestMatch.title).slice(0, 80)
   const currency = bestMatch.price.currency || 'USD'
+  const avgPrice = computeListingPrice(comparables, 7)
+  const price = avgPrice ?? parseFloat(bestMatch.price.value)
   const condition = bestMatch.condition || 'USED_EXCELLENT'
+  const aspects = buildAspects({ fields, partNumber, caseNumber })
+  const conditionDescription = conditionStatement(fields?.brand ?? fields?.make ?? null)
   // Resolve a leaf category. Taxonomy is the trusted source: Browse-API
   // `categories` arrays are inconsistent (sometimes leaf-first, sometimes
   // root-first, sometimes a retired parent the seller listed against), and
@@ -225,6 +257,8 @@ export async function autoCreateDraftListing({
     currency,
     quantity: 1,
     condition,
+    condition_description: conditionDescription,
+    aspects,
     category_id: categoryId,
     sku,
     status: 'draft',
@@ -375,10 +409,13 @@ export async function publishListing(
       currency: listing!.currency,
       quantity: listing!.quantity,
       condition: listing!.condition ?? 'USED_EXCELLENT',
+      conditionDescription: listing!.condition_description ?? undefined,
+      aspects: (listing!.aspects as Record<string, string[]> | null) ?? undefined,
       categoryId,
       fulfillmentPolicyId: policies.fulfillmentPolicyId,
       paymentPolicyId: policies.paymentPolicyId,
       returnPolicyId: policies.returnPolicyId,
+      storeCategory: process.env.EBAY_STORE_CATEGORY?.trim() || 'Inventory',
       imageUrls,
     })
   }

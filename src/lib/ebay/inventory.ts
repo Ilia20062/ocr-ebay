@@ -105,10 +105,16 @@ interface CreateListingParams {
   currency: string
   quantity: number
   condition: string
+  /** Free-text condition statement (spec: "Original {Brand} part…"). */
+  conditionDescription?: string
+  /** Item specifics (Brand, Placement, Color, Part Number, OEM, Warranty, Case). */
+  aspects?: Record<string, string[]>
   categoryId: string
   fulfillmentPolicyId: string
   paymentPolicyId: string
   returnPolicyId: string
+  /** Store category path (spec: "Inventory"). */
+  storeCategory?: string
   imageUrls: string[]
 }
 
@@ -234,8 +240,8 @@ export async function createAndPublishListing(
 ): Promise<{ listingId: string; listingUrl: string }> {
   const {
     userId, sku, title, description, price, currency,
-    quantity, condition, categoryId,
-    fulfillmentPolicyId, paymentPolicyId, returnPolicyId,
+    quantity, condition, conditionDescription, aspects, categoryId,
+    fulfillmentPolicyId, paymentPolicyId, returnPolicyId, storeCategory,
     imageUrls,
   } = params
 
@@ -285,9 +291,11 @@ export async function createAndPublishListing(
     product: {
       title,
       description,
+      ...(aspects && Object.keys(aspects).length > 0 ? { aspects } : {}),
       ...(imageUrls.length > 0 ? { imageUrls } : {}),
     },
     condition: normalizedCondition,
+    ...(conditionDescription ? { conditionDescription } : {}),
     availability: { shipToLocationAvailability: { quantity } },
   }
 
@@ -307,6 +315,7 @@ export async function createAndPublishListing(
     merchantLocationKey,
     listingPolicies: { fulfillmentPolicyId, paymentPolicyId, returnPolicyId },
     pricingSummary: { price: { value: price.toFixed(2), currency } },
+    ...(storeCategory ? { storeCategoryNames: [storeCategory] } : {}),
   }
 
   const offerId = await createOffer(userId, offer)

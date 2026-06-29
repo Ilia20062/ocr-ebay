@@ -144,6 +144,8 @@ CREATE TABLE IF NOT EXISTS listings (
   currency          TEXT NOT NULL DEFAULT 'USD',
   quantity          INT NOT NULL DEFAULT 1,
   condition         TEXT,
+  condition_description TEXT,
+  aspects           JSONB,
   category_id       TEXT,
   sku               TEXT,
   status            TEXT NOT NULL DEFAULT 'draft'
@@ -199,6 +201,8 @@ END$$;
 
 -- ---- additive columns (idempotent — for already-created databases) ---------
 ALTER TABLE upload_batches ADD COLUMN IF NOT EXISTS case_number TEXT;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS condition_description TEXT;
+ALTER TABLE listings ADD COLUMN IF NOT EXISTS aspects JSONB;
 
 -- ---- computed view ---------------------------------------------------------
 CREATE OR REPLACE VIEW ocr_results_with_final_code AS

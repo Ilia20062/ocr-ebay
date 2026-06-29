@@ -33,6 +33,8 @@ export interface EbayInventoryItem {
     imageUrls?: string[]
   }
   condition: string
+  /** Free-text condition statement shown on the listing (spec: "Original {Brand} part…"). */
+  conditionDescription?: string
   availability: {
     shipToLocationAvailability: { quantity: number }
   }
@@ -55,6 +57,8 @@ export interface EbayOffer {
   pricingSummary: {
     price: { value: string; currency: string }
   }
+  /** Store category path(s), e.g. ["Inventory"] (spec: Secondary Store Category = Inventory). */
+  storeCategoryNames?: string[]
 }
 
 export interface EbayApiError {

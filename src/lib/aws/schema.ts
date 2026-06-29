@@ -10,6 +10,7 @@ export const JSONB_COLUMNS: Record<string, Set<string>> = {
   ocr_results: new Set(['raw_response', 'all_candidates']),
   product_searches: new Set(['results_raw']),
   audit_logs: new Set(['old_value', 'new_value']),
+  listings: new Set(['aspects']),
 }
 
 export function isJsonbColumn(table: string, column: string): boolean {
