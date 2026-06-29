@@ -10,6 +10,7 @@ import { runGoogleVisionOcr } from './google-vision'
 import { scanBarcodeFromRgba } from './barcode'
 import { runPaddleOcr, isPaddleEnabled } from './paddle'
 import { maskOverlays } from './overlay-mask'
+import { extractCodeWithAI, isAiExtractorEnabled } from './ai-extractor'
 import { log } from '@/lib/log'
 import type { OcrProviderResult } from '@/types/ocr'
 
@@ -287,6 +288,8 @@ export interface RecognizeOptions {
    * Avoids the raw-RGBA encode + zxing TRY_HARDER decode cost (~200-400ms/img).
    */
   skipBarcode?: boolean
+  /** Skip the AI vision extractor (e.g. for bulk/low-value images). */
+  skipAI?: boolean
 }
 
 export async function recognizeWithFallback(
@@ -329,6 +332,21 @@ export async function recognizeWithFallback(
       }
     } catch (err) {
       log.debug('barcode pre-pass threw', { scope: 'ocr.recognize', err })
+    }
+  }
+
+  // 0.5) AI vision extraction (PRIMARY when OPENROUTER_API_KEY is set).
+  //      A vision LLM understands which text is the real OEM part number vs the
+  //      seller's "PartsOut" logo, "Warranty / 90 Days" badge, and the
+  //      manufacturing date — the exact noise that wrecks OCR+regex here. Fed
+  //      the ORIGINAL full-res buffer (best for faint engravings). Falls
+  //      through to OCR on null / unavailable / no readable code.
+  if (isAiExtractorEnabled() && !options.skipAI) {
+    try {
+      const aiResult = await extractCodeWithAI([{ buffer, mime: mimeType ?? 'image/jpeg' }])
+      if (aiResult?.topCandidate) return aiResult
+    } catch (err) {
+      log.warn('AI extractor failed — falling back to OCR', { scope: 'ocr.recognize', err })
     }
   }
 
