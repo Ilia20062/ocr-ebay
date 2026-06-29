@@ -18,13 +18,30 @@ const nextConfig: NextConfig = {
   // argument must be of type string or URL" errors). Loading it as an external
   // package keeps it on Node's CJS resolver where __dirname is defined.
   serverExternalPackages: ["tesseract.js", "tesseract.js-core"],
-  // Force-include Tesseract worker/core assets in the standalone trace.
-  // Next's nft tracer can miss them because they're resolved by string at
-  // runtime, not statically imported.
+  // Force-include the FULL Tesseract worker + core packages in the standalone
+  // trace. Next's nft tracer can't follow the worker thread's runtime requires
+  // (it's loaded by string path via node:worker_threads, not statically
+  // imported). The worker entry `src/worker-script/node/index.js` does
+  // `require('..')` → `src/worker-script/index.js` and pulls in the package's
+  // own bundled node_modules; tracing only `worker-script/node/**` left those
+  // out, so the worker thread died with MODULE_NOT_FOUND and createWorker()
+  // hung forever. Include the whole packages so every runtime require resolves.
   outputFileTracingIncludes: {
     "/**/*": [
-      "./node_modules/tesseract.js/src/worker-script/node/**",
+      "./node_modules/tesseract.js/**",
       "./node_modules/tesseract.js-core/**",
+      // tesseract.js's runtime deps are npm-hoisted to the top-level
+      // node_modules, so the worker thread's `require('bmp-js')` etc. miss the
+      // trace. These are all zero-dependency leaf packages — listing them is a
+      // complete closure for the Node worker path (setImage→bmp-js,
+      // gunzip→zlibjs, loadLang→is-url+node-fetch, getCore→wasm-feature-detect).
+      "./node_modules/bmp-js/**",
+      "./node_modules/zlibjs/**",
+      "./node_modules/is-url/**",
+      "./node_modules/node-fetch/**",
+      "./node_modules/wasm-feature-detect/**",
+      "./node_modules/idb-keyval/**",
+      "./node_modules/regenerator-runtime/**",
     ],
   },
   images: {
