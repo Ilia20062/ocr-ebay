@@ -350,20 +350,45 @@ export async function recognizeWithFallback(
     }
   }
 
-  // 1) Primary OCR.
-  let primaryResult: OcrProviderResult | null = null
-  let primaryErr: unknown = null
+  // 1) Vision is the PRIMARY OCR for these molded/engraved part codes when
+  //    enabled. It reads faint engravings on reflective metal far better than
+  //    Tesseract — which produces high-confidence GARBAGE here (e.g. "IOPOL1").
+  //    Fed the ORIGINAL full-res buffer; the extractor rejects the seller
+  //    overlays (PartsOut / Warranty / date) from Vision's token stream.
+  if (visionEnabled) {
+    const visionStart = Date.now()
+    try {
+      const visionResult = await runGoogleVisionOcr(buffer.toString('base64'), mimeType)
+      log.info('Vision ran (primary)', {
+        scope: 'ocr.recognize',
+        candidates: visionResult.candidates.length,
+        top_code: visionResult.topCandidate?.text ?? null,
+        top_conf: visionResult.topCandidate
+          ? Number(visionResult.topCandidate.confidence.toFixed(2))
+          : null,
+        dur_ms: Date.now() - visionStart,
+      })
+      // Trust Vision over Tesseract whether or not it found a code: a faint code
+      // Vision can't resolve won't be salvaged by Tesseract garbage. Returning
+      // Vision's (possibly empty) result lets the group resolve to NO CODE
+      // ("no code extracted") instead of a fabricated read.
+      return visionResult
+    } catch (err) {
+      log.warn('Vision primary failed — falling back to Tesseract', {
+        scope: 'ocr.recognize',
+        dur_ms: Date.now() - visionStart,
+        err,
+      })
+    }
+  }
+
+  // 2) Tesseract (or Paddle) — only when Vision is unavailable / errored.
   const primaryStart = Date.now()
   const primaryName = paddleEnabled ? 'paddle' : 'tesseract'
-
   try {
-    if (paddleEnabled) {
-      primaryResult = await runPaddleOcr(processedJpeg, processedMime)
-    } else {
-      primaryResult = await recognizeBuffer(worker, processedJpeg, processedMime)
-    }
+    if (paddleEnabled) return await runPaddleOcr(processedJpeg, processedMime)
+    return await recognizeBuffer(worker, processedJpeg, processedMime)
   } catch (err) {
-    primaryErr = err
     log.warn(`${primaryName} attempt failed`, {
       scope: 'ocr.recognize',
       provider: primaryName,
@@ -372,81 +397,13 @@ export async function recognizeWithFallback(
     })
     if (paddleEnabled) {
       try {
-        primaryResult = await recognizeBuffer(worker, processedJpeg, processedMime)
+        return await recognizeBuffer(worker, processedJpeg, processedMime)
       } catch (tessErr) {
-        log.warn('Tesseract failed after Paddle failure', {
-          scope: 'ocr.recognize',
-          err: tessErr,
-        })
+        log.warn('Tesseract failed after Paddle failure', { scope: 'ocr.recognize', err: tessErr })
       }
     }
+    throw new Error(
+      `All OCR providers failed: ${err instanceof Error ? err.message : String(err)}`,
+    )
   }
-
-  // High-confidence primary hit → return immediately, skip Vision call.
-  //
-  // 0.85 is the cap of scoreCandidate's heuristic alone — so anything ≥0.85
-  // must have been boosted by a real OCR word-confidence read (the average of
-  // heuristic + wordConf in selectTopCandidate). That's the only condition
-  // under which we trust primary enough to skip Vision. The previous threshold
-  // (0.55) let pure-heuristic scores on garbage like "SER3SAAS" pre-empt
-  // Vision, which is exactly what made molded-code OCR regress.
-  if (primaryResult?.topCandidate && primaryResult.topCandidate.confidence >= 0.85) {
-    return primaryResult
-  }
-
-  // 2) Vision fallback — covers primary returning empty, no candidates, or
-  //    weak candidates the user is unlikely to be happy with.
-  //
-  // Vision is fed the ORIGINAL buffer (not the 1200px downscale). Phone-photo
-  // molded codes need every available pixel to resolve the engraving, and
-  // Vision charges per call (not per pixel) with its own internal scaling.
-  // Feeding it the downscaled image was the second half of the OCR regression.
-  if (visionEnabled) {
-    const visionStart = Date.now()
-    try {
-      // Vision gets the ORIGINAL full-res buffer (not masked, not downscaled):
-      // it reads faint engraved digits best at full fidelity, and the extractor
-      // already rejects the seller overlays from its token stream. Masking is
-      // only applied to the Tesseract path (which merges adjacent text).
-      const visionResult = await runGoogleVisionOcr(buffer.toString('base64'), mimeType)
-      log.info('Vision fallback ran', {
-        scope: 'ocr.recognize',
-        text_len: visionResult.extractedText.length,
-        candidates: visionResult.candidates.length,
-        top_code: visionResult.topCandidate?.text ?? null,
-        top_conf: visionResult.topCandidate
-          ? Number(visionResult.topCandidate.confidence.toFixed(2))
-          : null,
-        dur_ms: Date.now() - visionStart,
-      })
-
-      // Prefer Vision by candidate QUALITY, not count. Tesseract on noisy molded
-      // codes emits many junk candidates that used to out-number — and wrongly
-      // suppress — Vision's single clean read. Use Vision when its best candidate
-      // is at least as strong as primary's, or when primary found none at all.
-      const primTop = primaryResult?.topCandidate?.confidence ?? 0
-      const visTop = visionResult.topCandidate?.confidence ?? 0
-      if (visionResult.topCandidate && visTop >= primTop) {
-        return visionResult
-      }
-      if (
-        !primaryResult?.topCandidate &&
-        visionResult.extractedText.length > (primaryResult?.extractedText.length ?? 0)
-      ) {
-        return visionResult
-      }
-    } catch (err) {
-      log.warn('Vision fallback failed', {
-        scope: 'ocr.recognize',
-        dur_ms: Date.now() - visionStart,
-        err,
-      })
-    }
-  }
-
-  if (primaryResult) return primaryResult
-
-  throw new Error(
-    `All OCR providers failed: ${primaryErr instanceof Error ? primaryErr.message : String(primaryErr)}`,
-  )
 }

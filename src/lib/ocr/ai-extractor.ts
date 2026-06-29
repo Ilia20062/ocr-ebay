@@ -19,7 +19,7 @@ const PROMPT = `You are extracting the manufacturer / OEM part number (MPN) from
 Rules:
 - Return ONLY the part number, exactly as it appears (letters, digits, dashes, slashes, dots).
 - NEVER return any of these — they are NOT part numbers: the seller brand "PartsOut", warranty text like "Warranty" / "90 Days", manufacturing dates like "30.03.11", country/quantity/price, or generic words.
-- If you cannot clearly read a part number, respond with exactly: NONE
+- Only output a part number if you can read it CLEARLY and are confident. If it is faint, blurry, partially hidden, or you are guessing, output NONE — do not invent or guess digits.
 
 Respond with the part number, or NONE — nothing else.`
 
