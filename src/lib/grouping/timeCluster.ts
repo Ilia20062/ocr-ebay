@@ -51,7 +51,11 @@ export function clusterByTime<T extends ClusterableImage>(
     const gap = prev ? img.capturedAt!.getTime() - prev.capturedAt!.getTime() : Infinity
 
     let startNew = !current || gap > gapMs
-    if (!startNew && prev && isBareJpg(prev.filename) && gap > jpgRetakeMs) {
+    // A bare .jpg terminates a cluster (the molded-code close-up at the END of a
+    // cycle) — but ONLY when it isn't the cluster's first image. A .jpg that
+    // OPENS a cluster is the case-number sticker that starts a new case, and the
+    // product photos shot right after belong WITH it, not in a separate group.
+    if (!startNew && prev && isBareJpg(prev.filename) && gap > jpgRetakeMs && current!.length > 1) {
       startNew = true
     }
 

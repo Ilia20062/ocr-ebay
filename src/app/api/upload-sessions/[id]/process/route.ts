@@ -249,8 +249,14 @@ async function processSessionInBackground(
       )
       const batchNumberImage = sortedByTime[0]
       const caseNumber = await extractCaseNumber(batchNumberImage)
-      const codeCluster =
-        cluster.length >= 2 ? cluster.filter((c) => c.id !== batchNumberImage.id) : cluster
+      // Exclude the first image from part-code detection when it IS a case
+      // sticker (a case number was read from it) — even in a 1-image batch, so a
+      // lone sticker resolves to "no code extracted" rather than a junk code
+      // like "AT1S.3718". When the first image has no case number (it's a normal
+      // product/close-up photo), keep it in the code set.
+      const codeCluster = caseNumber
+        ? cluster.filter((c) => c.id !== batchNumberImage.id)
+        : cluster
 
       // ─── Two-phase OCR ────────────────────────────────────────────────────
       // Phase 1: run OCR only on bare .jpg files (close-ups of the molded code).
