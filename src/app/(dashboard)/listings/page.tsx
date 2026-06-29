@@ -128,9 +128,13 @@ export default async function ListingsPage({
                   <summary className="cursor-pointer text-xs text-gray-600 hover:text-gray-900 select-none">
                     AI description ({listing.description.length.toLocaleString()} chars)
                   </summary>
-                  <pre className="mt-2 text-xs text-gray-700 bg-gray-50 rounded p-3 whitespace-pre-wrap font-sans border border-gray-100 max-h-96 overflow-auto">
-                    {listing.description}
-                  </pre>
+                  {/* Description is HTML (the same markup sent to eBay). Render
+                      it so the seller previews the formatted listing. It's the
+                      seller's own AI-generated content. */}
+                  <div
+                    className="ai-desc mt-2 text-xs text-gray-700 bg-gray-50 rounded p-3 border border-gray-100 max-h-96 overflow-auto [&_ul]:list-disc [&_ul]:pl-5 [&_p]:my-1.5 [&_strong]:text-gray-900"
+                    dangerouslySetInnerHTML={{ __html: listing.description }}
+                  />
                 </details>
               )}
 

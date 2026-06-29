@@ -15,7 +15,10 @@
 import { log, type LogContext } from "@/lib/log";
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_MODEL = "openai/gpt-oss-120b:free";
+// gpt-4o-mini: reliable + cheap and reliably emits well-formed HTML. The
+// previous free model (gpt-oss-120b:free) is heavily rate-limited (429), which
+// silently forced the placeholder fallback. Override with OPENROUTER_MODEL.
+const DEFAULT_MODEL = "openai/gpt-4o-mini";
 const REQUEST_TIMEOUT_MS = 60_000;
 const MAX_ATTEMPTS = 3;
 const BASE_BACKOFF_MS = 1_000; // 1s, 2s, 4s capped at 5s
@@ -25,7 +28,7 @@ Your task: based on the provided TITLE, generate a clean, ready-to-use eBay list
 
 Output rules:
 
-Show only the final description text — no explanations, no markdown, no brackets, no code blocks.
+Show only the final description text (HTML)— no explanations, no markdown, no brackets, no code blocks.
 
 Do not output separate keyword or tag lists — keywords must appear naturally.
 
@@ -128,8 +131,10 @@ If OEM PN or label photo is known, include all format variations.
 
 If info is limited, still produce a careful, informative description and recommend verifying by PN/VIN.
 
+HTML FORMAT (required): Output valid HTML only. Wrap every paragraph in <p>. Use <ul><li> for every bullet list. Make each section heading a <p><strong>…</strong></p> with its emoji icon inside (e.g. <p><strong>⭐ Key Features</strong></p>). Do NOT use markdown, do NOT add an <html>/<body> wrapper, and do NOT use code fences.
+
 Output:
-Only the final description in perfect U.S. English, following all formatting and section rules above.`;
+Only the html of final description in perfect U.S. English, following all formatting and section rules above.`;
 
 export type DescriptionSource = "ai" | "fallback";
 
