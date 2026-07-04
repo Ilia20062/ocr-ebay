@@ -11,7 +11,7 @@ import {
 import { enqueueRetry } from '@/lib/retry'
 import { generateListingDescription } from '@/lib/ai/generate-description'
 import { parseListingFields, buildAspects, conditionStatement } from '@/lib/ai/parse-listing'
-import { computeListingPrice } from './pricing'
+import { computeListingPrice, applyPriceFloor } from './pricing'
 import { describeEbayError } from './error'
 import { withContext, type LogContext } from '@/lib/log'
 import type { EbayItemSummary } from '@/types/ebay'
@@ -143,12 +143,14 @@ export async function autoCreateDraftListing({
 
   // Structured fields via AI: clean "Year Make Model Part OEM <PN>" title +
   // Brand/Placement/Color for the item aspects. Price = average of comparables
-  // − 7% (spec: 5–8%), falling back to the best-match price.
+  // − 7% (spec: 5–8%), falling back to the best-match price, then floored at the
+  // minimum ($29 by default, overridable via EBAY_MIN_PRICE) — no item ever
+  // lists below the minimum (client spec).
   const fields = await parseListingFields(bestMatch.title, partNumber)
   const title = (fields?.title ?? bestMatch.title).slice(0, 80)
   const currency = bestMatch.price.currency || 'USD'
-  const avgPrice = computeListingPrice(comparables, 7)
-  const price = avgPrice ?? parseFloat(bestMatch.price.value)
+  const computedPrice = computeListingPrice(comparables, 7) ?? parseFloat(bestMatch.price.value)
+  const price = applyPriceFloor(computedPrice)
   const condition = bestMatch.condition || 'USED_EXCELLENT'
   const aspects = buildAspects({ fields, partNumber, caseNumber })
   const conditionDescription = conditionStatement(fields?.brand ?? fields?.make ?? null)
@@ -199,9 +201,9 @@ export async function autoCreateDraftListing({
     return { success: false, error: 'No category found on matched product', steps }
   }
 
-  if (isNaN(price) || price <= 0) {
-    const msg = `Invalid price: "${bestMatch.price.value}"`
-    recordStep(steps, logger, 'Parse Match', 'fail', msg, { price_raw: bestMatch.price.value })
+  if (!Number.isFinite(price) || price <= 0) {
+    const msg = `Invalid listing price: "${price}" (check EBAY_MIN_PRICE)`
+    recordStep(steps, logger, 'Parse Match', 'fail', msg, { price })
     return { success: false, error: msg, steps }
   }
 
@@ -329,24 +331,34 @@ export async function publishListing(
     recordStep(steps, logger, 'Load Listing', 'fail', 'Listing already active on eBay')
     return { success: false, error: 'Listing already active', steps }
   }
-  if (!listing.title || listing.price === null || !listing.category_id) {
-    const msg = 'Listing missing required fields (title, price, category)'
+  if (!listing.title || !listing.category_id) {
+    const msg = 'Listing missing required fields (title, category)'
     recordStep(steps, logger, 'Load Listing', 'fail', msg, {
       has_title: !!listing.title,
-      has_price: listing.price !== null,
       has_category: !!listing.category_id,
     })
     return { success: false, error: msg, steps }
   }
 
+  // Resolve the price we'll actually send to eBay. Two things happen here:
+  //   1. Coerce the stored value to a Number. The NUMERIC `price` column comes
+  //      back from PostgREST as a *string*, which broke createAndPublishListing's
+  //      Number.isFinite check → "empty/invalid: price".
+  //   2. Floor at the minimum ($29 by default). Guarantees no live listing is
+  //      below the minimum (client spec), including older drafts stored cheaper.
+  const validatedPrice = applyPriceFloor(Number(listing.price))
+
   const sku = listing.sku ?? `SKU-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`
   recordStep(steps, logger, 'Load Listing', 'ok',
-    `title="${listing.title}", price=${listing.price} ${listing.currency}, sku=${sku}, status was '${listing.status}'`,
-    { sku, prior_status: listing.status, search_id: listing.search_id },
+    `title="${listing.title}", price=${validatedPrice} ${listing.currency}, sku=${sku}, status was '${listing.status}'`,
+    { sku, price: validatedPrice, prior_status: listing.status, search_id: listing.search_id },
   )
 
+  // Persist the resolved price so the DB/queue/display stay consistent with
+  // what we actually list at (older sub-minimum drafts get bumped to the floor).
   await db.from('listings').update({
     status: 'submitting',
+    price: validatedPrice,
     attempt_count: (listing.attempt_count ?? 0) + 1,
     last_attempted_at: new Date().toISOString(),
     error_message: null,
@@ -397,8 +409,6 @@ export async function publishListing(
     { images: imageUrls.length },
   )
 
-  // Validated above, but narrow for TypeScript inside the nested function.
-  const validatedPrice = listing.price as number
   async function attemptPublish(categoryId: string) {
     return createAndPublishListing({
       userId,
