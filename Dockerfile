@@ -31,8 +31,9 @@ RUN groupadd --system --gid 1001 nodejs \
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-# Migration runner + schema, executed as a one-off task against private RDS.
+# Migration runner + schema + admin scripts, run as one-off tasks against private RDS.
 COPY --from=builder --chown=nextjs:nodejs /app/scripts/migrate.cjs ./scripts/migrate.cjs
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/wipe-user.cjs ./scripts/wipe-user.cjs
 COPY --from=builder --chown=nextjs:nodejs /app/infra/sql ./infra/sql
 
 USER nextjs
