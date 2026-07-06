@@ -46,7 +46,23 @@ Write-Host "`n==> [1/5] Ensuring ECR repository and pushing image" -ForegroundCo
 try { aws ecr describe-repositories --repository-names $EcrRepoName --region $Region | Out-Null }
 catch { aws ecr create-repository --repository-name $EcrRepoName --image-scanning-configuration scanOnPush=true --region $Region | Out-Null }
 
-aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin "$AccountId.dkr.ecr.$Region.amazonaws.com"
+# Capture the token into a variable and pass it via --password. Piping
+# `get-login-password | docker login --password-stdin` intermittently corrupts
+# the token under Windows PowerShell (pipeline stdin encoding) -> ECR "400 Bad
+# Request". Passing --password avoids the pipe entirely.
+#
+# docker writes an insecure-password WARNING to stderr; under this script's
+# ErrorActionPreference=Stop that stderr line is promoted to a terminating
+# NativeCommandError even though login succeeds (exit 0). Drop to Continue just
+# around the login and gate on the real exit code instead.
+$ecrPassword = (aws ecr get-login-password --region $Region)
+if (-not $ecrPassword) { throw "aws ecr get-login-password returned empty - check AWS credentials/region." }
+$eapPrev = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+docker login --username AWS --password $ecrPassword "$AccountId.dkr.ecr.$Region.amazonaws.com"
+$loginExit = $LASTEXITCODE
+$ErrorActionPreference = $eapPrev
+if ($loginExit -ne 0) { throw "docker login to ECR failed (exit $loginExit)." }
 docker build -t "${EcrUri}:$Tag" -t "${EcrUri}:latest" .
 docker push "${EcrUri}:$Tag"
 docker push "${EcrUri}:latest"
@@ -92,15 +108,27 @@ foreach ($k in @('ENCRYPTION_KEY','CRON_SECRET','EBAY_CLIENT_ID','EBAY_CLIENT_SE
 if (-not $current.ENCRYPTION_KEY) { $current.ENCRYPTION_KEY = (New-HexKey 32) }   # 64 hex chars
 if (-not $current.CRON_SECRET)    { $current.CRON_SECRET    = (New-HexKey 24) }
 $json = ($current | ConvertTo-Json -Compress)
-aws secretsmanager put-secret-value --secret-id $AppSecretArn --secret-string $json | Out-Null
+# Write via a file:// reference. Passing the JSON inline strips the double
+# quotes when PowerShell hands it to aws.exe, storing malformed JSON that ECS
+# then cannot extract secret keys from (bricks the app secret). file:// is
+# byte-exact.
+$secretFile = Join-Path $env:TEMP "ocr-app-secret.json"
+[System.IO.File]::WriteAllText($secretFile, $json)
+aws secretsmanager put-secret-value --secret-id $AppSecretArn --secret-string "file://$secretFile" | Out-Null
+Remove-Item $secretFile -Force -ErrorAction SilentlyContinue
 Write-Host "    ENCRYPTION_KEY/CRON_SECRET set; integration keys taken from env where present."
 
 # ---- 4. Run DB migrations (one-off Fargate task) -----------------------------
 Write-Host "`n==> [4/5] Applying database schema via one-off Fargate task" -ForegroundColor Green
 $netCfg = "awsvpcConfiguration={subnets=[$SubnetIds],securityGroups=[$TaskSg],assignPublicIp=ENABLED}"
-$overrides = '{"containerOverrides":[{"name":"' + $ContainerNm + '","command":["node","scripts/migrate.cjs"]}]}'
+# Pass containerOverrides via a file:// reference. Inline, PowerShell strips the
+# JSON double quotes when handing the arg to aws.exe, yielding invalid JSON
+# ({containerOverrides:[...]}) and a ParamValidation error.
+$overridesJson = '{"containerOverrides":[{"name":"' + $ContainerNm + '","command":["node","scripts/migrate.cjs"]}]}'
+$overridesFile = Join-Path $env:TEMP "ocr-migrate-overrides.json"
+[System.IO.File]::WriteAllText($overridesFile, $overridesJson)
 $taskArn = (aws ecs run-task --cluster $Cluster --task-definition $TaskDefArn --launch-type FARGATE `
-  --network-configuration $netCfg --overrides $overrides --query 'tasks[0].taskArn' --output text)
+  --network-configuration $netCfg --overrides "file://$overridesFile" --query 'tasks[0].taskArn' --output text)
 Write-Host "    migration task: $taskArn"
 aws ecs wait tasks-stopped --cluster $Cluster --tasks $taskArn
 $exit = (aws ecs describe-tasks --cluster $Cluster --tasks $taskArn --query 'tasks[0].containers[0].exitCode' --output text)
