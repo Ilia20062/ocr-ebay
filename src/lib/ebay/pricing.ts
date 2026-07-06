@@ -2,7 +2,7 @@ import type { EbayItemSummary } from '@/types/ebay'
 
 /**
  * Minimum listing price. Per client spec, no item may list below $29 — cheaper
- * comparables get floored up to this value. Overridable at runtime via the
+ * computed prices get floored up to this value. Overridable at runtime via the
  * `EBAY_MIN_PRICE` env var (invalid/empty values fall back to the default).
  */
 export const DEFAULT_MIN_LISTING_PRICE = 29

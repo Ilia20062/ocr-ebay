@@ -3,7 +3,7 @@ import { revalidatePath } from 'next/cache'
 import { withAuth, apiError } from '@/lib/middleware'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { batchReviewSchema } from '@/lib/validators/upload'
-import { searchEbayProducts, selectBestMatch } from '@/lib/ebay/search'
+import { searchEbayProductsDetailed, selectBestMatch } from '@/lib/ebay/search'
 import { autoCreateDraftListing, type DraftListingResult } from '@/lib/ebay/auto-list'
 import { generateListingImageUrls } from '@/lib/ebay/image-urls'
 import { enqueueRetry } from '@/lib/retry'
@@ -115,11 +115,16 @@ export const PATCH = withAuth(async (req, userId, params) => {
 
   try {
     debug(`Calling searchEbayProducts(query="${finalCode}")`)
-    const items = await searchEbayProducts(userId, finalCode)
+    const { items, matchedQuery, triedQueries } = await searchEbayProductsDetailed(userId, finalCode)
+    if (matchedQuery && matchedQuery !== finalCode) {
+      debug(`No hits for "${finalCode}"; matched on fallback query "${matchedQuery}" (tried: ${triedQueries.join(', ')})`)
+    } else if (!matchedQuery && triedQueries.length > 1) {
+      debug(`No hits for any query variant (tried: ${triedQueries.join(', ')})`)
+    }
     debug(`eBay returned ${items.length} item(s)`)
     searchDebug.itemCount = items.length
 
-    const best = selectBestMatch(items, finalCode)
+    const best = selectBestMatch(items, matchedQuery ?? finalCode)
 
     await db
       .from('product_searches')
