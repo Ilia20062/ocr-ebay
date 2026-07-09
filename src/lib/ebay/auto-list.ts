@@ -151,7 +151,10 @@ export async function autoCreateDraftListing({
   const currency = bestMatch.price.currency || 'USD'
   const computedPrice = computeListingPrice(comparables, 7) ?? parseFloat(bestMatch.price.value)
   const price = applyPriceFloor(computedPrice)
-  const condition = bestMatch.condition || 'USED_EXCELLENT'
+  // Client rule: every item is a used OEM part — always list as Used
+  // (USED_EXCELLENT = conditionId 3000, displayed as plain "Used"), never
+  // inherit the matched listing's condition (which may be "New").
+  const condition = 'USED_EXCELLENT'
   const aspects = buildAspects({ fields, partNumber, caseNumber })
   const conditionDescription = conditionStatement(fields?.brand ?? fields?.make ?? null)
   // Resolve a leaf category. Taxonomy is the trusted source: Browse-API

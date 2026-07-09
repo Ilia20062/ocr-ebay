@@ -64,7 +64,15 @@ const VALID_CONDITIONS = new Set([
 // Browse-API returns human-readable strings ("Used", "Pre-owned", "For parts
 // or not working"); the Sell API requires the strict enum above. Map common
 // variants → enum, then fall back to USED_EXCELLENT as a safe default.
+// Client rule: never publish as "New" — every item is a used OEM part, so any
+// NEW-family value (old drafts, manual edits, Browse matches) is clamped to
+// USED_EXCELLENT (conditionId 3000, displayed as plain "Used").
 export function normalizeCondition(raw: string | null | undefined): string {
+  const normalized = toConditionEnum(raw)
+  return normalized.startsWith('NEW') ? 'USED_EXCELLENT' : normalized
+}
+
+function toConditionEnum(raw: string | null | undefined): string {
   if (!raw) return 'USED_EXCELLENT'
   const upper = raw.toString().trim().toUpperCase().replace(/[\s-]+/g, '_')
 
