@@ -3,6 +3,7 @@ import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { getSupabaseServerClient } from '@/lib/supabase/server'
 import { PackageOpen } from 'lucide-react'
 import PublishButton from './PublishButton'
+import DeleteButton from './DeleteButton'
 import CategoryOverride from './CategoryOverride'
 
 export const dynamic = 'force-dynamic'
@@ -120,6 +121,7 @@ export default async function ListingsPage({
                       label={listing.status === 'draft' ? 'Publish to eBay' : 'Retry'}
                     />
                   )}
+                  <DeleteButton listingId={listing.id} />
                 </div>
               </div>
 
