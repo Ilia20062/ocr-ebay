@@ -403,6 +403,7 @@ export async function publishListing(
         .from('images')
         .select('id, storage_path')
         .eq('batch_id', search.batch_id)
+        .order('is_label_candidate', { ascending: true })
         .order('created_at', { ascending: true })
       imageUrls = await generateListingImageUrls(db, imgs ?? [])
     }

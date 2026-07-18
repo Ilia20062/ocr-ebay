@@ -62,6 +62,7 @@ export const PATCH = withAuth(async (req, userId, params) => {
     .from('images')
     .select('id, storage_path')
     .eq('batch_id', batchId)
+    .order('is_label_candidate', { ascending: true })
     .order('created_at', { ascending: true })
 
   const groupImages = images ?? []

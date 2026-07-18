@@ -128,6 +128,7 @@ export const POST = withAuth(async (req, userId) => {
         .from('images')
         .select('id, storage_path')
         .eq('batch_id', body.batch_id)
+        .order('is_label_candidate', { ascending: true })
         .order('created_at', { ascending: true })
 
       if (imgErr) {
