@@ -84,6 +84,48 @@ async function fetchPolicies(
 }
 
 /**
+ * Chooses which policy to list under.
+ *
+ * A real selling account usually has several shipping policies. Taking
+ * `[0]` and hoping meant the listing silently went out under whichever one
+ * eBay happened to return first, which is not necessarily the one the seller
+ * wants. `EBAY_{FULFILLMENT,PAYMENT,RETURN}_POLICY` pins the choice by policy
+ * name or id; without it we keep the old behaviour but warn when the choice
+ * was actually ambiguous.
+ */
+function pick(
+  log: ReturnType<typeof withContext>,
+  kind: string,
+  list: EbayPolicy[],
+  getId: (p: EbayPolicy) => string | undefined,
+  preference?: string,
+): string | undefined {
+  const want = preference?.trim()
+  if (want) {
+    const match = list.find(
+      (p) => getId(p) === want || p.name?.trim().toLowerCase() === want.toLowerCase(),
+    )
+    if (match) {
+      log.info(`Pinned ${kind} policy from env`, { name: match.name, id: getId(match) })
+      return getId(match)
+    }
+    log.warn(`No ${kind} policy matches the configured preference — falling back`, {
+      preference: want,
+      available: list.map((p) => p.name),
+    })
+  }
+
+  if (list.length > 1) {
+    log.warn(`Multiple ${kind} policies — defaulting to the first eBay returned`, {
+      chosen: list[0]?.name,
+      available: list.map((p) => p.name),
+      hint: `Set EBAY_${kind.toUpperCase()}_POLICY to pin this.`,
+    })
+  }
+  return list[0] ? getId(list[0]) : undefined
+}
+
+/**
  * Fetches the user's eBay business policies (fulfillment, payment, return).
  *
  * Self-heals the common 20403 "User is not eligible for Business Policy"
@@ -142,9 +184,18 @@ export async function getBusinessPolicies(userId: string): Promise<BusinessPolic
     return_count: policies.returnPolicies.length,
   })
 
-  const fulfillmentPolicyId = policies.fulfillmentPolicies[0]?.fulfillmentPolicyId
-  const paymentPolicyId = policies.paymentPolicies[0]?.paymentPolicyId
-  const returnPolicyId = policies.returnPolicies[0]?.returnPolicyId
+  const fulfillmentPolicyId = pick(
+    log, 'fulfillment', policies.fulfillmentPolicies,
+    (p) => p.fulfillmentPolicyId, process.env.EBAY_FULFILLMENT_POLICY,
+  )
+  const paymentPolicyId = pick(
+    log, 'payment', policies.paymentPolicies,
+    (p) => p.paymentPolicyId, process.env.EBAY_PAYMENT_POLICY,
+  )
+  const returnPolicyId = pick(
+    log, 'return', policies.returnPolicies,
+    (p) => p.returnPolicyId, process.env.EBAY_RETURN_POLICY,
+  )
 
   if (!fulfillmentPolicyId || !paymentPolicyId || !returnPolicyId) {
     const missing: string[] = []

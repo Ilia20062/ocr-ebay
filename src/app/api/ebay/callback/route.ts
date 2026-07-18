@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServerClient } from '@/lib/supabase/server'
-import { exchangeCodeForTokens } from '@/lib/ebay/auth'
+import { exchangeCodeForTokens, fetchEbayUserId } from '@/lib/ebay/auth'
 import { saveConnection } from '@/lib/ebay/token-manager'
 import { cookies } from 'next/headers'
 
@@ -29,7 +29,14 @@ export async function GET(req: NextRequest) {
     if (!tokens.refresh_token) {
       return NextResponse.redirect(`${appUrl}/settings/ebay?error=no_refresh_token`)
     }
-    await saveConnection(user.id, tokens.access_token, tokens.refresh_token, tokens.expires_in)
+    const ebayUserId = await fetchEbayUserId(tokens.access_token)
+    await saveConnection(
+      user.id,
+      tokens.access_token,
+      tokens.refresh_token,
+      tokens.expires_in,
+      ebayUserId ?? undefined,
+    )
     return NextResponse.redirect(`${appUrl}/settings/ebay?connected=true`)
   } catch {
     return NextResponse.redirect(`${appUrl}/settings/ebay?error=token_exchange_failed`)

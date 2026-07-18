@@ -428,7 +428,12 @@ export async function publishListing(
       fulfillmentPolicyId: policies.fulfillmentPolicyId,
       paymentPolicyId: policies.paymentPolicyId,
       returnPolicyId: policies.returnPolicyId,
-      storeCategory: process.env.EBAY_STORE_CATEGORY?.trim() || 'Inventory',
+      // No default. `storeCategoryNames` only applies to accounts with an eBay
+      // Store subscription AND requires a category with that exact name to
+      // already exist there — a hardcoded fallback ("Inventory") is wrong for
+      // any account that doesn't happen to have one, and inventory.ts omits
+      // the field entirely when this is undefined.
+      storeCategory: process.env.EBAY_STORE_CATEGORY?.trim() || undefined,
       imageUrls,
     })
   }

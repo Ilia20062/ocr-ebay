@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSupabaseServerClient } from '@/lib/supabase/server'
-import { exchangeCodeForTokens } from '@/lib/ebay/auth'
+import { exchangeCodeForTokens, fetchEbayUserId } from '@/lib/ebay/auth'
 import { saveConnection } from '@/lib/ebay/token-manager'
 
 export async function POST(req: NextRequest) {
@@ -39,7 +39,14 @@ export async function POST(req: NextRequest) {
     }
 
     // Save to database
-    await saveConnection(user.id, tokens.access_token, tokens.refresh_token, tokens.expires_in)
+    const ebayUserId = await fetchEbayUserId(tokens.access_token)
+    await saveConnection(
+      user.id,
+      tokens.access_token,
+      tokens.refresh_token,
+      tokens.expires_in,
+      ebayUserId ?? undefined,
+    )
 
     return NextResponse.json({ success: true })
   } catch (err) {
