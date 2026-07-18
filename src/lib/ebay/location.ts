@@ -1,5 +1,10 @@
 import { createEbayClient } from './client'
 import { describeEbayError } from './error'
+import {
+  getCachedLocationKey,
+  setCachedLocationKey,
+  invalidateLocationCache,
+} from './account-cache'
 import { withContext } from '@/lib/log'
 import type { AxiosInstance } from 'axios'
 
@@ -52,9 +57,9 @@ interface LocationListResponse {
 
 const DEFAULT_LOCATION_KEY = 'default-warehouse'
 
-// In-memory cache so we don't hit the location-list endpoint on every publish.
-// Key: userId. Invalidated only on process restart or explicit invalidate.
-const locationCache = new Map<string, string>()
+// The memoized merchantLocationKey lives in ./account-cache so that connecting
+// or disconnecting an eBay account can drop it without an import cycle. See the
+// header of that file — the key is account-scoped, not just user-scoped.
 
 interface LocationEnvConfig {
   key: string
@@ -162,7 +167,7 @@ async function updateLocationAddress(
 }
 
 export async function getOrCreateMerchantLocationKey(userId: string): Promise<string> {
-  const cached = locationCache.get(userId)
+  const cached = getCachedLocationKey(userId)
   if (cached) return cached
 
   const log = withContext({ scope: 'ebay.location', user_id: userId })
@@ -200,7 +205,7 @@ export async function getOrCreateMerchantLocationKey(userId: string): Promise<st
         total: existing.length,
         usable_count: usable.length,
       })
-      locationCache.set(userId, key)
+      setCachedLocationKey(userId, key)
       return key
     }
 
@@ -222,7 +227,7 @@ export async function getOrCreateMerchantLocationKey(userId: string): Promise<st
       try {
         await updateLocationAddress(client, cfg.key, cfg)
         log.info('Repaired location address', { merchant_location_key: cfg.key })
-        locationCache.set(userId, cfg.key)
+        setCachedLocationKey(userId, cfg.key)
         return cfg.key
       } catch (err) {
         const { summary, ctx } = describeEbayError(err)
@@ -251,7 +256,7 @@ export async function getOrCreateMerchantLocationKey(userId: string): Promise<st
   try {
     const key = await createLocation(client, cfgWithKey)
     log.info('Inventory location created', { merchant_location_key: key })
-    locationCache.set(userId, key)
+    setCachedLocationKey(userId, key)
     return key
   } catch (err) {
     const { summary, ctx } = describeEbayError(err)
@@ -266,7 +271,7 @@ export async function getOrCreateMerchantLocationKey(userId: string): Promise<st
           log.info('Race-created location repaired via update_location_details', {
             key: desiredKey,
           })
-          locationCache.set(userId, desiredKey)
+          setCachedLocationKey(userId, desiredKey)
           return desiredKey
         } catch (repairErr) {
           const repair = describeEbayError(repairErr)
@@ -277,7 +282,7 @@ export async function getOrCreateMerchantLocationKey(userId: string): Promise<st
         }
       }
       log.info('Location already existed (raced) — using configured key', { key: desiredKey })
-      locationCache.set(userId, desiredKey)
+      setCachedLocationKey(userId, desiredKey)
       return desiredKey
     }
     log.error('Failed to create inventory location', { ...ctx, err: summary })
@@ -285,7 +290,4 @@ export async function getOrCreateMerchantLocationKey(userId: string): Promise<st
   }
 }
 
-export function invalidateLocationCache(userId?: string) {
-  if (userId) locationCache.delete(userId)
-  else locationCache.clear()
-}
+export { invalidateLocationCache }

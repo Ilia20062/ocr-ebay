@@ -1,6 +1,7 @@
 import { encrypt, decrypt } from '@/lib/encryption'
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
 import { refreshAccessToken } from './auth'
+import { invalidateAccountCaches } from './account-cache'
 import type { EbayConnection } from '@/types/database'
 
 // In-memory access-token cache. Without this, every eBay API call paid a
@@ -35,12 +36,26 @@ export async function getDecryptedConnection(userId: string): Promise<EbayConnec
   }
 }
 
+/**
+ * Persists an eBay connection for `userId`.
+ *
+ * `opts.sameAccount` must be set by callers that are re-saving tokens for the
+ * *already connected* account (i.e. a routine refresh). Everything else — the
+ * OAuth callback, the manual code exchange — may be attaching a different eBay
+ * seller account to the same app user, so we drop the account-scoped caches.
+ * Defaulting to `false` means a caller that forgets errs on the safe side.
+ *
+ * Getting this wrong is not theoretical: the memoized `merchantLocationKey` is
+ * keyed by app userId, so a stale entry from a previously connected account
+ * makes every publish fail with `errorId=25002 Location information not found`.
+ */
 export async function saveConnection(
   userId: string,
   accessToken: string,
   refreshToken: string,
   expiresIn: number,
-  ebayUserId?: string
+  ebayUserId?: string,
+  opts?: { sameAccount?: boolean },
 ) {
   const db = getSupabaseAdminClient()
   const expiresAtMs = Date.now() + expiresIn * 1000
@@ -58,6 +73,10 @@ export async function saveConnection(
   // Keep the cache in step with the fresh token. New tokens here are always
   // safe to memoize — we just wrote them.
   tokenCache.set(userId, { accessToken, expiresAt: expiresAtMs })
+
+  // A connect/reconnect may have swapped which eBay seller account this app
+  // user is bound to; anything memoized against the old one is now wrong.
+  if (!opts?.sameAccount) invalidateAccountCaches(userId)
 }
 
 export async function getFreshAccessToken(userId: string): Promise<string> {
@@ -84,7 +103,10 @@ export async function getFreshAccessToken(userId: string): Promise<string> {
   const tokens = await refreshAccessToken(connection.refresh_token)
   // eBay omits refresh_token on routine refreshes; keep the existing one.
   const nextRefreshToken = tokens.refresh_token ?? connection.refresh_token
-  await saveConnection(userId, tokens.access_token, nextRefreshToken, tokens.expires_in)
+  // Same seller account — don't throw away the resolved location key.
+  await saveConnection(userId, tokens.access_token, nextRefreshToken, tokens.expires_in, undefined, {
+    sameAccount: true,
+  })
   return tokens.access_token
 }
 
@@ -92,4 +114,5 @@ export async function deleteConnection(userId: string) {
   const db = getSupabaseAdminClient()
   await db.from('ebay_connections').delete().eq('user_id', userId)
   tokenCache.delete(userId)
+  invalidateAccountCaches(userId)
 }

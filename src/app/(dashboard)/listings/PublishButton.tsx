@@ -23,9 +23,12 @@ export default function PublishButton({ listingId, label, variant }: Props) {
       const body = await res.json().catch(() => ({}))
       if (!res.ok || body.ok === false) {
         setErr(body.error ?? `Publish failed (${res.status})`)
-      } else {
-        router.refresh()
       }
+      // Refresh on failure too. publishListing moves the row draft → submitting
+      // → failed and persists error_message, so skipping the refresh here left
+      // the badge reading "draft" next to a publish error — making it look like
+      // the draft had been lost when it was only the stale server render.
+      router.refresh()
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
     }

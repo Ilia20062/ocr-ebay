@@ -332,20 +332,30 @@ export async function createAndPublishListing(
   try {
     listingId = await publishOffer(userId, offerId)
   } catch (publishErr) {
-    // Self-heal the one specific publish failure that the prior layers can
-    // miss: cached merchantLocationKey now points at a location whose country
-    // has gone missing (e.g., a manual edit in Seller Hub, or it never had
-    // one and listLocations didn't expose that). Invalidate cache, force a
-    // fresh resolution, re-PUT the offer with the new key, and retry once.
-    const isCountryError =
+    // Self-heal the publish failures that the prior layers can miss: the
+    // memoized merchantLocationKey no longer refers to a usable location.
+    // Two known shapes, both reported as the overloaded 25002:
+    //   - "No <Item.Country> exists" — the location lost its country (e.g. a
+    //     manual edit in Seller Hub, or it never had one and listLocations
+    //     didn't expose that).
+    //   - "Location information not found" — the key doesn't resolve at all,
+    //     which is what you get after the app user reconnects a *different*
+    //     eBay seller account: the cached key belongs to the old account.
+    // Both are fixed the same way — invalidate, re-resolve, re-PUT the offer
+    // with the new key, retry once. Matching on "location" too matters because
+    // the cache has no TTL: without a retry the bad key would be re-sent on
+    // every subsequent publish until the process restarted.
+    const isStaleLocationError =
       isEbayErrorCode(publishErr, 25002) &&
       (ebayErrorHasParam(publishErr, 25002, 'Item.Country') ||
-        ebayErrorMessageMatches(publishErr, 25002, /Item\.Country/i))
-    if (!isCountryError) throw publishErr
+        ebayErrorMessageMatches(publishErr, 25002, /Item\.Country/i) ||
+        ebayErrorMessageMatches(publishErr, 25002, /location/i))
+    if (!isStaleLocationError) throw publishErr
 
-    log.warn('publish failed with Item.Country — re-resolving location and retrying once', {
+    log.warn('publish failed with a location error — re-resolving location and retrying once', {
       offer_id: offerId,
       previous_merchant_location_key: merchantLocationKey,
+      ebay_error: describeEbayError(publishErr).summary,
     })
     invalidateLocationCache(userId)
     const freshKey = await getOrCreateMerchantLocationKey(userId)
