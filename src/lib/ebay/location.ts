@@ -197,14 +197,41 @@ export async function getOrCreateMerchantLocationKey(userId: string): Promise<st
         usable.find((l) => l.merchantLocationStatus === 'ENABLED') ??
         usable[0]
       const key = preferred.merchantLocationKey
-      log.info('Resolved existing inventory location', {
-        merchant_location_key: key,
-        country: preferred.location?.address?.country ?? null,
-        postal_code: preferred.location?.address?.postalCode ?? null,
-        status: preferred.merchantLocationStatus ?? null,
-        total: existing.length,
-        usable_count: usable.length,
-      })
+      const existingCountry = preferred.location?.address?.country?.trim().toUpperCase()
+      const configCountry = cfg.country?.trim().toUpperCase()
+
+      // If the location's country doesn't match our config, repair it.
+      // This handles the case where the env was changed (e.g. US → MD) but the
+      // eBay-side location still has the old country, causing error 25019.
+      if (configCountry && existingCountry && existingCountry !== configCountry && cfg.postalCode) {
+        log.warn('Inventory location country mismatch — repairing', {
+          merchant_location_key: key,
+          existing_country: existingCountry,
+          configured_country: configCountry,
+        })
+        try {
+          await updateLocationAddress(client, key, { ...cfg, key })
+          log.info('Repaired location country mismatch', {
+            merchant_location_key: key,
+            from: existingCountry,
+            to: configCountry,
+          })
+        } catch (err) {
+          const { summary, ctx } = describeEbayError(err)
+          log.error('Failed to repair location country mismatch', { ...ctx, err: summary })
+          // Don't throw — let it proceed and eBay will surface the real error
+        }
+      } else {
+        log.info('Resolved existing inventory location', {
+          merchant_location_key: key,
+          country: existingCountry ?? null,
+          postal_code: preferred.location?.address?.postalCode ?? null,
+          status: preferred.merchantLocationStatus ?? null,
+          total: existing.length,
+          usable_count: usable.length,
+        })
+      }
+
       setCachedLocationKey(userId, key)
       return key
     }
