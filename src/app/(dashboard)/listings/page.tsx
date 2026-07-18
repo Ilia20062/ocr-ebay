@@ -140,7 +140,7 @@ export default async function ListingsPage({
                 </details>
               )}
 
-              {listing.error_message && (
+              {listing.error_message && listing.status === 'failed' && (
                 <p className="text-xs text-red-600 bg-red-50 rounded p-2 whitespace-pre-wrap break-words">
                   {listing.error_message}
                 </p>
