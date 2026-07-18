@@ -323,16 +323,16 @@ export async function createAndPublishListing(
     availability: { shipToLocationAvailability: { quantity } },
   }
 
+  const resolvedMarketplaceId = isMotorsCategoryId(categoryId)
+    ? 'EBAY_MOTORS_US'
+    : (process.env.EBAY_MARKETPLACE_ID ?? 'EBAY_US')
+
   await createOrUpdateInventoryItem(userId, sku, inventoryItem, resolvedMarketplaceId)
 
   // Resolve (or auto-create) the seller's inventory location. Without this
   // the Sell API rejects the offer with errorId=25002 "No <Item.Country>".
   const merchantLocationKey = await getOrCreateMerchantLocationKey(userId)
   log.info('Resolved merchantLocationKey', { merchant_location_key: merchantLocationKey })
-
-  const resolvedMarketplaceId = isMotorsCategoryId(categoryId)
-    ? 'EBAY_MOTORS_US'
-    : (process.env.EBAY_MARKETPLACE_ID ?? 'EBAY_US')
 
   const offer: EbayOffer = {
     sku,
