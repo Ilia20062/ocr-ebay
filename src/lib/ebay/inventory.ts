@@ -3,6 +3,7 @@ import { createEbayClient, isEbayErrorCode } from './client'
 import { describeEbayError } from './error'
 import { getOrCreateMerchantLocationKey, invalidateLocationCache } from './location'
 import { withContext } from '@/lib/log'
+import { isMotorsCategoryId } from './taxonomy'
 import type { EbayInventoryItem, EbayOffer } from '@/types/ebay'
 
 /**
@@ -130,6 +131,7 @@ export async function createOrUpdateInventoryItem(
   userId: string,
   sku: string,
   item: EbayInventoryItem,
+  marketplaceId?: string,
 ) {
   const log = withContext({ scope: 'ebay.inventory.item', user_id: userId, sku })
   log.info('Creating/updating inventory item', {
@@ -142,7 +144,9 @@ export async function createOrUpdateInventoryItem(
   const client = createEbayClient(userId)
   const started = Date.now()
   try {
-    await client.put(`/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, item)
+    await client.put(`/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`, item, {
+      headers: marketplaceId ? { 'X-EBAY-C-MARKETPLACE-ID': marketplaceId } : undefined,
+    })
     log.info('Inventory item created/updated', { dur_ms: Date.now() - started })
   } catch (err) {
     const { summary, ctx } = describeEbayError(err)
@@ -171,7 +175,11 @@ export async function createOffer(userId: string, offer: EbayOffer): Promise<str
   const client = createEbayClient(userId)
   const started = Date.now()
   try {
-    const res = await client.post<{ offerId: string }>('/sell/inventory/v1/offer', offer)
+    const res = await client.post<{ offerId: string }>('/sell/inventory/v1/offer', offer, {
+      headers: {
+        'X-EBAY-C-MARKETPLACE-ID': offer.marketplaceId,
+      },
+    })
     log.info('Offer created', { offer_id: res.data.offerId, dur_ms: Date.now() - started })
     return res.data.offerId
   } catch (err) {
@@ -215,10 +223,14 @@ export async function updateOffer(
   const log = withContext({ scope: 'ebay.inventory.offer.update', user_id: userId, offer_id: offerId })
   log.info('Updating offer', { merchant_location_key: offer.merchantLocationKey })
   const client = createEbayClient(userId)
-  await client.put(`/sell/inventory/v1/offer/${offerId}`, offer)
+  await client.put(`/sell/inventory/v1/offer/${offerId}`, offer, {
+    headers: {
+      'X-EBAY-C-MARKETPLACE-ID': offer.marketplaceId,
+    },
+  })
 }
 
-export async function publishOffer(userId: string, offerId: string): Promise<string> {
+export async function publishOffer(userId: string, offerId: string, marketplaceId?: string): Promise<string> {
   const log = withContext({ scope: 'ebay.inventory.publish', user_id: userId, offer_id: offerId })
   log.info('Publishing offer')
   const client = createEbayClient(userId)
@@ -226,6 +238,10 @@ export async function publishOffer(userId: string, offerId: string): Promise<str
   try {
     const res = await client.post<{ listingId: string }>(
       `/sell/inventory/v1/offer/${offerId}/publish`,
+      undefined,
+      {
+        headers: marketplaceId ? { 'X-EBAY-C-MARKETPLACE-ID': marketplaceId } : undefined,
+      }
     )
     log.info('Offer published', {
       ebay_listing_id: res.data.listingId,
@@ -307,16 +323,20 @@ export async function createAndPublishListing(
     availability: { shipToLocationAvailability: { quantity } },
   }
 
-  await createOrUpdateInventoryItem(userId, sku, inventoryItem)
+  await createOrUpdateInventoryItem(userId, sku, inventoryItem, resolvedMarketplaceId)
 
   // Resolve (or auto-create) the seller's inventory location. Without this
   // the Sell API rejects the offer with errorId=25002 "No <Item.Country>".
   const merchantLocationKey = await getOrCreateMerchantLocationKey(userId)
   log.info('Resolved merchantLocationKey', { merchant_location_key: merchantLocationKey })
 
+  const resolvedMarketplaceId = isMotorsCategoryId(categoryId)
+    ? 'EBAY_MOTORS_US'
+    : (process.env.EBAY_MARKETPLACE_ID ?? 'EBAY_US')
+
   const offer: EbayOffer = {
     sku,
-    marketplaceId: process.env.EBAY_MARKETPLACE_ID ?? 'EBAY_US',
+    marketplaceId: resolvedMarketplaceId,
     format: 'FIXED_PRICE',
     availableQuantity: quantity,
     categoryId,
@@ -330,7 +350,7 @@ export async function createAndPublishListing(
 
   let listingId: string
   try {
-    listingId = await publishOffer(userId, offerId)
+    listingId = await publishOffer(userId, offerId, resolvedMarketplaceId)
   } catch (publishErr) {
     // Self-heal the publish failures that the prior layers can miss: the
     // memoized merchantLocationKey no longer refers to a usable location.
@@ -366,7 +386,7 @@ export async function createAndPublishListing(
       })
     }
     await updateOffer(userId, offerId, { ...offer, merchantLocationKey: freshKey })
-    listingId = await publishOffer(userId, offerId)
+    listingId = await publishOffer(userId, offerId, resolvedMarketplaceId)
   }
 
   const domain = process.env.EBAY_ENVIRONMENT === 'sandbox' ? 'sandbox.ebay.com' : 'ebay.com'

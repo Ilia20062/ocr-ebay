@@ -9,6 +9,7 @@ const BASE_URL = process.env.EBAY_ENVIRONMENT === 'sandbox'
 // Map marketplace IDs to their BCP-47 locale equivalents.
 const MARKETPLACE_LOCALE: Record<string, string> = {
   EBAY_US: 'en-US',
+  EBAY_MOTORS_US: 'en-US',
   EBAY_GB: 'en-GB',
   EBAY_AU: 'en-AU',
   EBAY_CA: 'en-CA',
@@ -28,8 +29,7 @@ const MARKETPLACE_LOCALE: Record<string, string> = {
   EBAY_PH: 'en-PH',
 }
 
-function getContentLanguage(): string {
-  const marketplaceId = process.env.EBAY_MARKETPLACE_ID ?? 'EBAY_US'
+function getContentLanguage(marketplaceId: string): string {
   return MARKETPLACE_LOCALE[marketplaceId] ?? 'en-US'
 }
 
@@ -41,10 +41,11 @@ export function createEbayClient(userId: string): AxiosInstance {
     const token = await getFreshAccessToken(userId)
     config.headers.Authorization = `Bearer ${token}`
     config.headers['Content-Type'] = config.headers['Content-Type'] ?? 'application/json'
-    config.headers['X-EBAY-C-MARKETPLACE-ID'] = process.env.EBAY_MARKETPLACE_ID ?? 'EBAY_US'
+    const marketplaceId = config.headers['X-EBAY-C-MARKETPLACE-ID'] ?? process.env.EBAY_MARKETPLACE_ID ?? 'EBAY_US'
+    config.headers['X-EBAY-C-MARKETPLACE-ID'] = marketplaceId
     // Required by eBay Inventory API for PUT/POST requests (errorId=25709 if omitted).
     if (config.method && ['put', 'post', 'patch'].includes(config.method.toLowerCase())) {
-      config.headers['Content-Language'] = config.headers['Content-Language'] ?? getContentLanguage()
+      config.headers['Content-Language'] = config.headers['Content-Language'] ?? getContentLanguage(marketplaceId as string)
     }
     return config
   })
