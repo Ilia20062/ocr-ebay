@@ -5,6 +5,7 @@ import { PackageOpen } from 'lucide-react'
 import PublishButton from './PublishButton'
 import DeleteButton from './DeleteButton'
 import CategoryOverride from './CategoryOverride'
+import RecategorizeButton from './RecategorizeButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -120,6 +121,9 @@ export default async function ListingsPage({
                       variant={listing.status === 'draft' ? 'primary' : 'danger'}
                       label={listing.status === 'draft' ? 'Publish to eBay' : 'Retry'}
                     />
+                  )}
+                  {listing.status === 'active' && (
+                    <RecategorizeButton listingId={listing.id} />
                   )}
                   <DeleteButton listingId={listing.id} />
                 </div>

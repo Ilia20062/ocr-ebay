@@ -230,6 +230,28 @@ export async function updateOffer(
   })
 }
 
+/** Looks up the live offerId for a SKU. Returns null if the SKU has no offer. */
+export async function getOfferIdBySku(userId: string, sku: string): Promise<string | null> {
+  const client = createEbayClient(userId)
+  const res = await client.get<{ offers: Array<{ offerId: string }> }>(
+    '/sell/inventory/v1/offer',
+    { params: { sku } },
+  )
+  return res.data.offers?.[0]?.offerId ?? null
+}
+
+/**
+ * Fetches the offer exactly as eBay currently has it on file. Used as the
+ * base for a targeted update (e.g. recategorize) instead of rebuilding the
+ * offer from our own DB row, which can drift from a price/quantity change
+ * made directly in Seller Hub since publish.
+ */
+export async function getOffer(userId: string, offerId: string): Promise<EbayOffer & { offerId: string }> {
+  const client = createEbayClient(userId)
+  const res = await client.get<EbayOffer & { offerId: string }>(`/sell/inventory/v1/offer/${offerId}`)
+  return res.data
+}
+
 export async function publishOffer(userId: string, offerId: string, marketplaceId?: string): Promise<string> {
   const log = withContext({ scope: 'ebay.inventory.publish', user_id: userId, offer_id: offerId })
   log.info('Publishing offer')

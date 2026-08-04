@@ -1,5 +1,5 @@
 import { getSupabaseAdminClient } from '@/lib/supabase/admin'
-import { createAndPublishListing } from './inventory'
+import { createAndPublishListing, getOfferIdBySku, getOffer, updateOffer } from './inventory'
 import { getBusinessPolicies, type BusinessPolicies } from './policies'
 import { generateListingImageUrls } from './image-urls'
 import {
@@ -7,6 +7,7 @@ import {
   suggestLeafCategoryId,
   suggestLeafCategoryIds,
   ensureLeafCategoryId,
+  isMotorsCategoryId,
 } from './taxonomy'
 import { enqueueRetry } from '@/lib/retry'
 import { generateListingDescription } from '@/lib/ai/generate-description'
@@ -551,4 +552,107 @@ export async function publishListing(
     await enqueueRetry('listing', listingId, summary)
     return { success: false, error: summary, steps }
   }
+}
+
+export interface RecategorizeResult {
+  success: boolean
+  /** True when the title already maps to the listing's current category — nothing was sent to eBay. */
+  unchanged?: boolean
+  previousCategoryId?: string | null
+  newCategoryId?: string
+  newCategoryName?: string
+  error?: string
+}
+
+/**
+ * Re-detects a LIVE listing's eBay category from its title and pushes the
+ * change straight to the published offer via `updateOffer`.
+ *
+ * eBay only allows a category change on an active listing while it has zero
+ * sales and doesn't end within 12 hours (Trading/Inventory API rule) — a
+ * rejection past that point is expected, not a bug, so it's surfaced as a
+ * plain message rather than retried.
+ *
+ * Mutates only `categoryId` on the offer eBay already has on file (fetched
+ * fresh via GET) rather than rebuilding the offer from our DB row, so a
+ * price/quantity edit made directly in Seller Hub since publish can't be
+ * clobbered by a stale local copy.
+ */
+export async function recategorizeActiveListing(
+  userId: string,
+  listingId: string,
+): Promise<RecategorizeResult> {
+  const db = getSupabaseAdminClient()
+  const logger = withContext({ scope: 'ebay.recategorize', user_id: userId, listing_id: listingId })
+
+  const { data: listing } = await db
+    .from('listings')
+    .select('*')
+    .eq('id', listingId)
+    .eq('user_id', userId)
+    .single()
+
+  if (!listing) return { success: false, error: 'Listing not found' }
+  if (listing.status !== 'active') {
+    return { success: false, error: 'Only a live (active) listing can be recategorized this way — use the category override for drafts.' }
+  }
+  if (!listing.sku) return { success: false, error: 'Listing has no SKU on record' }
+
+  const suggestions = await suggestLeafCategoryIds(userId, listing.title, 5)
+  if (suggestions.length === 0) {
+    return { success: false, error: 'eBay Taxonomy returned no category suggestion for this title' }
+  }
+  let newCategoryId = suggestions[0].categoryId
+  const newCategoryName = suggestions[0].categoryName
+  const verifiedLeaf = await ensureLeafCategoryId(userId, newCategoryId)
+  if (verifiedLeaf) newCategoryId = verifiedLeaf
+
+  if (newCategoryId === listing.category_id) {
+    logger.info('Recategorize: title already maps to the current category', { category_id: newCategoryId })
+    return { success: true, unchanged: true, previousCategoryId: listing.category_id, newCategoryId, newCategoryName }
+  }
+
+  const offerId = await getOfferIdBySku(userId, listing.sku)
+  if (!offerId) {
+    return { success: false, error: 'Could not find the live eBay offer for this SKU' }
+  }
+
+  const currentOffer = await getOffer(userId, offerId)
+
+  // Motors Parts & Accessories categories live on a separate marketplace
+  // (EBAY_MOTORS_US) from the standard EBAY_US tree. Moving a *published*
+  // listing across marketplaces isn't something eBay's update API supports —
+  // block it with a clear message instead of sending a request that either
+  // silently no-ops or corrupts the live listing.
+  const requiresMotors = isMotorsCategoryId(newCategoryId)
+  const currentlyMotors = currentOffer.marketplaceId === 'EBAY_MOTORS_US'
+  if (requiresMotors !== currentlyMotors) {
+    return {
+      success: false,
+      error: `The best title match ("${newCategoryName}", ${newCategoryId}) is on a different eBay marketplace ` +
+        `(${requiresMotors ? 'eBay Motors' : 'the standard eBay marketplace'}) than this live listing currently uses. ` +
+        `eBay doesn't support moving a published listing across marketplaces — end and relist instead.`,
+    }
+  }
+
+  try {
+    await updateOffer(userId, offerId, { ...currentOffer, categoryId: newCategoryId })
+  } catch (err) {
+    const { summary, ctx } = describeEbayError(err)
+    const mentionsCategory = ctx.errors?.some(
+      (e) => /categor/i.test(e.message ?? '') || /categor/i.test(e.longMessage ?? ''),
+    )
+    logger.warn('updateOffer rejected the category change', { ...ctx, err: summary, attempted: newCategoryId })
+    return {
+      success: false,
+      error: mentionsCategory
+        ? `eBay rejected the category change: ${summary}. Note eBay only allows this while a listing has ` +
+          `zero sales and more than 12 hours left before it ends.`
+        : summary,
+    }
+  }
+
+  await db.from('listings').update({ category_id: newCategoryId, error_message: null }).eq('id', listingId)
+  logger.info('Recategorized active listing', { from: listing.category_id, to: newCategoryId, offer_id: offerId })
+  return { success: true, previousCategoryId: listing.category_id, newCategoryId, newCategoryName }
 }
