@@ -151,6 +151,7 @@ export async function suggestLeafCategoryIds(
   const client = createEbayClient(userId)
   const allRows: SuggestionRow[] = []
   const seen = new Set<string>()
+  let motorsHadResults = false
 
   for (const treeId of treesToQuery) {
     try {
@@ -164,11 +165,32 @@ export async function suggestLeafCategoryIds(
           categoryName: s.category?.categoryName,
         }))
         .filter((r): r is SuggestionRow => !!r.categoryId && !seen.has(r.categoryId))
+      if (treeId === MOTORS_TREE_ID && rows.length > 0) motorsHadResults = true
       for (const r of rows) seen.add(r.categoryId)
       allRows.push(...rows)
     } catch (err) {
       const { summary } = describeEbayError(err)
       log.warn('get_category_suggestions failed for tree', { tree_id: treeId, err: summary })
+    }
+  }
+
+  // eBay's default-tree (EBAY_US) suggester is unreliable on part-number-heavy
+  // automotive titles ("C207 W207 A2076800489") — it keys off stray keywords
+  // and can confidently return something topically nonsensical (observed in
+  // production: a Mercedes dashboard trim suggested under "Collectibles & Art
+  // > Holiday & Seasonal > Other Holiday Collectibles"). eBay doesn't validate
+  // topical fit, only that the category is a listable leaf, so a bad guess
+  // sails through with no error. When the Motors tree came back empty for an
+  // automotive-looking title, prefer a manually-verified fallback category
+  // (EBAY_FALLBACK_CATEGORY_ID) over trusting that guess.
+  if (looksAutomotive && !motorsHadResults) {
+    const fallbackId = process.env.EBAY_FALLBACK_CATEGORY_ID?.trim()
+    if (fallbackId && !seen.has(fallbackId)) {
+      allRows.unshift({ categoryId: fallbackId, categoryName: '(configured EBAY_FALLBACK_CATEGORY_ID)' })
+      seen.add(fallbackId)
+      log.info('Automotive title with no Motors suggestions — preferring configured fallback over default-tree guess', {
+        fallback_category_id: fallbackId,
+      })
     }
   }
 

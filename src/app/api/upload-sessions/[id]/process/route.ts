@@ -103,18 +103,35 @@ export const POST = withAuth(async (_req, userId, params) => {
  * Read the seller's case/batch number from the batch's first (case-number)
  * image. Uses Google Vision for the raw text (a clear printed number), then
  * `extractBatchNumber` to pull the integer while rejecting warranty/date noise.
- * Best-effort: returns null if Vision is unavailable or no number is found.
+ * Best-effort: returns null if Vision is unavailable or no number is found —
+ * every null path is logged so a missed SKU is diagnosable from the batch_id
+ * instead of silently falling back to a random `SKU-<timestamp>` (see
+ * `auto-list.ts`'s `sku` fallback).
  */
-async function extractCaseNumber(image: ClusterImage): Promise<string | null> {
-  if (!process.env.GOOGLE_VISION_API_KEY) return null
+async function extractCaseNumber(image: ClusterImage, batchId?: string): Promise<string | null> {
+  const log = withContext({ scope: 'session.process.case-number', batch_id: batchId ?? null, filename: image.filename })
+  if (!process.env.GOOGLE_VISION_API_KEY) {
+    log.warn('GOOGLE_VISION_API_KEY not set — cannot read case number, will fall back to a generated SKU')
+    return null
+  }
   try {
     const db = getSupabaseAdminClient()
     const { data: blob, error } = await db.storage.from('images').download(image.storage_path)
-    if (error || !blob) return null
+    if (error || !blob) {
+      log.warn('Could not download case-number image — will fall back to a generated SKU', { err: error })
+      return null
+    }
     const buf = Buffer.from(await blob.arrayBuffer())
     const result = await runGoogleVisionOcr(buf.toString('base64'), blob.type || 'image/jpeg')
-    return extractBatchNumber(result.extractedText)
-  } catch {
+    const caseNumber = extractBatchNumber(result.extractedText)
+    if (!caseNumber) {
+      log.warn('Vision OCR ran but no case number pattern matched — will fall back to a generated SKU', {
+        extracted_text_preview: result.extractedText?.slice(0, 200) ?? null,
+      })
+    }
+    return caseNumber
+  } catch (err) {
+    log.error('Case-number OCR threw — will fall back to a generated SKU', { err })
     return null
   }
 }
@@ -248,7 +265,7 @@ async function processSessionInBackground(
         (a, b) => (a.capturedAt?.getTime() ?? 0) - (b.capturedAt?.getTime() ?? 0),
       )
       const batchNumberImage = sortedByTime[0]
-      const caseNumber = await extractCaseNumber(batchNumberImage)
+      const caseNumber = await extractCaseNumber(batchNumberImage, batch.id)
       // Exclude the first image from part-code detection when it IS a case
       // sticker (a case number was read from it) — even in a 1-image batch, so a
       // lone sticker resolves to "no code extracted" rather than a junk code

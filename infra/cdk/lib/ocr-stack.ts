@@ -169,6 +169,10 @@ export class OcrStack extends cdk.Stack {
           PGDATABASE: 'ocrcrm',
           EBAY_ENVIRONMENT: props.ebayEnvironment,
           EBAY_MARKETPLACE_ID: 'EBAY_US',
+          // Automotive titles where eBay's Taxonomy API has no Motors-tree
+          // suggestion fall back to this instead of trusting the general
+          // marketplace's unreliable keyword guesser (see taxonomy.ts).
+          EBAY_FALLBACK_CATEGORY_ID: '365',
           EBAY_LOCATION_KEY: 'default-warehouse',
           EBAY_LOCATION_COUNTRY: 'MD',
           EBAY_LOCATION_POSTAL_CODE: 'MD-6501',

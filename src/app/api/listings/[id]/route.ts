@@ -50,18 +50,25 @@ export const DELETE = withAuth(async (_req, userId, params) => {
   const db = getSupabaseAdminClient()
   const { data } = await db
     .from('listings')
-    .select('ebay_item_id, status')
+    .select('sku, status')
     .eq('id', params!.id)
     .eq('user_id', userId)
     .single()
 
   if (!data) return apiError('Listing not found', 404)
 
-  if (data.status === 'active' && data.ebay_item_id) {
+  if (data.status === 'active') {
+    if (!data.sku) {
+      return apiError('Cannot end this listing on eBay: no SKU on record. It has NOT been removed from eBay.', 409)
+    }
     try {
-      await endListing(userId, data.ebay_item_id)
-    } catch {
-      // Continue even if eBay end fails — mark locally as ended
+      await endListing(userId, data.sku)
+    } catch (err) {
+      // Do NOT mark the row ended if the eBay call actually failed — doing so
+      // previously left the item live and still sellable on eBay while the
+      // app claimed it was gone.
+      const msg = err instanceof Error ? err.message : String(err)
+      return apiError(`Could not end the listing on eBay — it is still live and may still sell. Nothing was changed. (${msg})`, 502)
     }
   }
 

@@ -418,7 +418,40 @@ export async function createAndPublishListing(
   return { listingId, listingUrl }
 }
 
-export async function endListing(userId: string, listingId: string) {
+/**
+ * Ends a live listing by withdrawing its offer.
+ *
+ * `/sell/inventory/v1/offer/{offerId}/withdraw` takes the Sell-API **offerId**
+ * — a different identifier from the marketplace listing/item ID
+ * (`listings.ebay_item_id`) that `publishOffer` returns. That id was never
+ * persisted anywhere, so this previously took `listingId` (the item ID) and
+ * called withdraw with the wrong id — eBay rejected it, the caller swallowed
+ * the error, and the row got marked `ended` locally while the item stayed
+ * live and kept selling on eBay. Resolve the real offerId by SKU instead.
+ */
+export async function endListing(userId: string, sku: string): Promise<void> {
+  const log = withContext({ scope: 'ebay.inventory.end', user_id: userId, sku })
+  const offerId = await getOfferIdBySku(userId, sku)
+  if (!offerId) {
+    log.warn('endListing: no live eBay offer found for this SKU — treating as already ended')
+    return
+  }
   const client = createEbayClient(userId)
-  await client.post(`/sell/inventory/v1/offer/${listingId}/withdraw`)
+  try {
+    await client.post(`/sell/inventory/v1/offer/${offerId}/withdraw`)
+    log.info('Offer withdrawn', { offer_id: offerId })
+  } catch (err) {
+    const { summary, ctx } = describeEbayError(err)
+    // An offer that's already unpublished/withdrawn errors here too — that's
+    // the outcome we wanted, so don't fail the caller over it.
+    const alreadyEnded = ctx.errors?.some((e) =>
+      /not\s*publish|already\s*(end|withdraw|unpublish)/i.test(`${e.message ?? ''} ${e.longMessage ?? ''}`),
+    )
+    if (alreadyEnded) {
+      log.info('Offer was already unpublished — treating as success', { offer_id: offerId })
+      return
+    }
+    log.error('Failed to withdraw offer', { ...ctx, err: summary, offer_id: offerId })
+    throw err
+  }
 }
