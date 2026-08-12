@@ -15,13 +15,41 @@
 import { log, type LogContext } from "@/lib/log";
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-// gpt-4o-mini: reliable + cheap and reliably emits well-formed HTML. The
-// previous free model (gpt-oss-120b:free) is heavily rate-limited (429), which
-// silently forced the placeholder fallback. Override with OPENROUTER_MODEL.
-const DEFAULT_MODEL = "openai/gpt-4o-mini";
+// Free tier by request (no OpenRouter balance required). Verified end-to-end
+// through THIS file's generateListingDescription (real SYSTEM_PROMPT, real
+// 60s timeout/retry path) before picking it — most OpenRouter free models
+// are "thinking" models that spend their token budget on hidden
+// chain-of-thought and either return empty content or, worse, leak the raw
+// reasoning transcript as if it were the answer:
+//   - openai/gpt-oss-20b:free            — burned its whole budget on
+//                                           reasoning, returned null content.
+//   - nvidia/nemotron-3-nano-30b-a3b:free — dumped raw chain-of-thought
+//                                           ("We need to produce HTML...")
+//                                           as `content`, finish_reason=length.
+//   - nvidia/nemotron-3.5-lightning:free  — same failure, worse: burned the
+//                                           full 4096-token cap on a
+//                                           "Here's a thinking process:"
+//                                           transcript and never reached an
+//                                           answer.
+//   - nvidia/nemotron-3-super-120b-a12b:free — output was correct when it
+//                                           landed, but real single-request
+//                                           latency exceeded the 60s timeout
+//                                           on every attempt tested.
+//   - liquid/lfm-2.5-2.6b:free           — exhausted all retries on timeout.
+//   - google/gemma-4-31b-it:free         — persistently 429s (shared free
+//                                           pool congestion upstream at
+//                                           Google AI Studio).
+// nemotron-nano-9b-v2:free is the one that actually held up: finish_reason
+// stop, clean structured HTML matching the prompt, real API latency <1s in
+// isolated testing. Override with OPENROUTER_MODEL if you want a paid model.
+const DEFAULT_MODEL = "nvidia/nemotron-nano-9b-v2:free";
 const REQUEST_TIMEOUT_MS = 60_000;
 const MAX_ATTEMPTS = 3;
 const BASE_BACKOFF_MS = 1_000; // 1s, 2s, 4s capped at 5s
+// Free "thinking" models spend part of this budget on hidden reasoning
+// tokens before ever emitting content. Doubled from the original 2048 for
+// headroom; costs nothing extra unless the model actually uses it.
+const MAX_COMPLETION_TOKENS = 4096;
 
 const SYSTEM_PROMPT = `You are an eBay SEO and used OEM auto parts expert for the U.S. market.
 Your task: based on the provided TITLE, generate a clean, ready-to-use eBay listing description in English (SEO-optimized for search).
@@ -278,7 +306,7 @@ async function callOpenRouter(
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: `TITLE: ${title}` },
         ],
-        max_tokens: 2048,
+        max_tokens: MAX_COMPLETION_TOKENS,
         temperature: 0.4,
       }),
     });
